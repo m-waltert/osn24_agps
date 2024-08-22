@@ -8,38 +8,33 @@ def takeoff_detection(traj,
                       rwy_geometries, 
                       df_rwys, 
                       airport_str='LSZH',
-                      maxHoleDuration=60):
+                      gsColName='compute_gs'):
     """
-    Detects takeoff and taxiing events from trajectory data, identifies the takeoff runway, and computes the taxi duration.
+    Detects takeoff events from a given trajectory and associates the takeoff with the correct runway.
 
-    This function analyzes a given aircraft trajectory to determine if a takeoff occurred. It checks for intersections with
-    runway geometries and calculates key metrics such as lineup time, taxi start time, taxi duration, and the takeoff runway 
-    designation. The results are stored back into the trajectory's data.
+    This function analyzes a flight trajectory to determine if a takeoff has occurred at a specified airport.
+    If a takeoff is detected, the function identifies the runway used and marks the trajectory data with 
+    the takeoff runway, lineup time, and a boolean flag indicating whether a takeoff occurred.
 
     Args:
-        traj (Trajectory): The flight object representing the aircraft's movement data.
-        rwy_geometries (list of Shapely geometries): A list of runway geometries to check for intersections with the trajectory.
-        df_rwys (DataFrame): A DataFrame containing runway information, including bearing and runway names, i.e., airports[airport_str].runways.data
-        airport_str (str): The ICAO code of the airport where the takeoff is being detected.
-        maxHoleDuration (int): Maximum duration of a hole in the trajectory permitted, is provided in units seconds
+        traj (Trajectory): A traffic flight object
+        rwy_geometries (list of shapely.geometry.Polygon): A list of runway geometries (polygons) representing 
+                                                           the airport's runways.
+        df_rwys (pandas.DataFrame): from traffic.core import airports -> airports[airport_str].runways.data
+        airport_str (str): The ICAO code of the airport to check for takeoff. Defaults to 'LSZH'.
+        gsColName (str, optional): The name of the column in `traj` that contains ground speed data. Defaults to 'compute_gs'.
 
     Returns:
-        Trajectory: The input trajectory object with additional attributes for taxi start time, lineup time, taxi duration, 
-        and the identified takeoff runway.
+        Trajectory: The input trajectory with additional columns:
+                    - 'lineupTime': The timestamp of the aircraft's lineup on the runway, or NaN if no takeoff was detected.
+                    - 'takeoffRunway': The name of the detected takeoff runway, or an empty string if no takeoff was detected.
+                    - 'isTakeoff': A boolean indicating whether a takeoff was detected.
 
-    Attributes added to traj.data:
-        startTaxi (Timestamp or NaN): The timestamp of when taxiing started, or NaN if not detected.
-        lineupTime (Timestamp or NaN): The timestamp of when the aircraft lined up on the runway, or NaN if not detected.
-        taxiDuration (Timedelta or NaN): The duration of the taxi, calculated as the difference between lineup time and taxi start.
-        takeoff_runway (str or NaN): The name of the runway from which the aircraft took off, or NaN if not detected.
-
-    Raises:
-        None
+    Notes:
+        - The function assumes that the trajectory contains data relevant to the specified airport.
 
     Example:
-        ```python
-        updated_traj = takeoff_taxi_detection(traj, rwy_geometries, df_rwys, "LSZH")
-        ```
+        traj = takeoff_detection(traj, rwy_geometries, df_rwys, airport_str='LSZH', gsColName='ground_speed')
     """
 
     takeoffRunway = ''
@@ -57,10 +52,26 @@ def takeoff_detection(traj,
                 if (clipped_traj is None) or (clipped_traj.data.empty): #or (clipped_traj.duration < timedelta(seconds=60)):
                     continue
 
-                # Check whether there is a "hole" in the traj, which can happen for runway 16 departures, that cross runway 10/28 (and the software
-                # then wrongfully assumes that it is runway 10/28 departure)
-                time_diff = traj.inside_bbox(rwy).data['timestamp'].diff().dt.total_seconds()
-                if time_diff.dropna().max() > maxHoleDuration:
+                # # Check whether there is a "hole" in the traj, which can happen for runway 16 departures, that cross runway 10/28 (and the software
+                # # then wrongfully assumes that it is runway 10/28 departure)
+                # time_diff = traj.inside_bbox(rwy).data['timestamp'].diff().dt.total_seconds()
+                # if time_diff.dropna().max() > maxHoleDuration:
+                #     continue
+
+                # # Check if mean track of the clipped part does not coincide with the runway heading. This can happen, for instance,
+                # # if aircraft departing on runway 16 cross runway 10/28 before takeoff
+                # TrackDifference = np.abs(clipped_traj.data.track.median() - df_rwys.iloc[2*i].bearing)
+                # if 10 < TrackDifference < 170 or TrackDifference > 190:
+                #     continue
+                # # else:
+                # #     # Runway coincides with track
+                # #     print('yes')
+
+                # Check maximum distance of clipped traj to rwy geometry. If distance it "too" large, this mean that clipped traj moves away from
+                # the runway. This can happen, for instance,  with the rwy10/28 geometry with aircraft departing on runway 16 that cross runway 
+                # 10/28 before takeoff
+                maxDistfromRwy = clipped_traj.distance(rwy).data.distance.max()
+                if np.abs(maxDistfromRwy) > 200:
                     continue
 
                 # Cache traj snippets
@@ -70,7 +81,7 @@ def takeoff_detection(traj,
                 #last_60min_data = traj.last(minutes=60)
 
                 # Calculate ground speed and vertical rate
-                median_gs = first_5sec.compute_gs.median() if not first_5sec.compute_gs.isna().all() else np.nan
+                median_gs = first_5sec[gsColName].median() if not first_5sec[gsColName].isna().all() else np.nan
                 median_rate = np.nanmedian(last_5sec.vertical_rate) if not last_5sec.vertical_rate.isna().all() else np.nan
 
                 if (median_gs < 30) and (median_rate > 500) and not last_20sec.empty:
@@ -89,26 +100,6 @@ def takeoff_detection(traj,
 
                     break
 
-        # if isTakeoff:
-        #     # Check if Pushback executed?
-        #     pushback = last_60min_data.pushback(airport_str)
-        #     if pushback is not None:
-        #         isPushback = True
-        #         startPushback = pushback.start
-        #         startTaxi = pushback.stop
-        #         pushbackDuration = startTaxi - startPushback
-        #     else:
-        #         # Check if parking position exists & aircraft is longer on position than 30 seconds
-        #         parkingPosition = last_60min_data.on_parking_position(airport_str).max()
-        #         if (parkingPosition is not None) and (parkingPosition.duration > timedelta(seconds=30)):
-        #             startTaxi = parkingPosition.stop
-        #         else:
-        #             startTaxi = last_60min_data.start if not last_60min_data.data.empty else np.nan
-
-        #     if (startTaxi is not np.nan) and (lineupTime is not np.nan):
-        #         taxiDuration = lineupTime - startTaxi
-
-
     traj.data.loc[:, 'lineupTime'] = lineupTime
     traj.data.loc[:, 'takeoffRunway'] = takeoffRunway
     traj.data.loc[:, 'isTakeoff'] = isTakeoff
@@ -117,7 +108,35 @@ def takeoff_detection(traj,
 
 
 def alternative_pushback_detection(traj, standAreas, airport_str='LSZH'):
-    """ Alternative means of detecting a pushback. Only valid for trajs which show negativ taxi duration."""
+    """
+    Detects pushback events for a given flight trajectory using another method than the one specified in the traffic library.
+    This detection is valid only for trajectories classified as takeoffs using method takeoff_detection() specified above.
+
+    The function determines whether a pushback has occurred based on the flight's interaction with stand area geometries to be provided
+    by the user. These geometries are polygons specifying the outset of the stand areas on an airport. The method calculates the pushback 
+    duration, taxi duration, and marks the relevant timestamps in the trajectory data.
+
+    Args:
+        traj (Trajectory): A traffic flight object
+        standAreas (list of shapely.geometry.Polygon): A list of stand area geometries (polygons) representing parking
+                                                       or stand locations at the airport.
+        airport_str (str): The ICAO code of the airport to check for pushback and taxi events. Defaults to 'LSZH'.
+
+    Returns:
+        Trajectory: The input trajectory with additional columns:
+                    - 'isPushback': A boolean indicating whether a pushback was detected.
+                    - 'startPushback': The timestamp when the pushback started, or NaN if not detected.
+                    - 'startTaxi': The timestamp when taxiing started, or NaN if not detected.
+                    - 'pushbackDuration': The duration of the pushback, or NaN if not detected.
+                    - 'taxiDuration': The duration of the taxi, or NaN if not detected.
+
+    Notes:
+        - This function assumes that the trajectory corresponds to a takeoff event classified using method takeoff_detection().
+        - It applies detection logic only if the takeoff flag is set in the trajectory data.
+
+    Example:
+        traj = alternative_pushback_detection(traj, standAreas, airport_str='LSZH')
+    """
 
     lineupTime = traj.data.lineupTime.iloc[0]
     taxiDuration = np.nan
@@ -177,18 +196,6 @@ def alternative_pushback_detection(traj, standAreas, airport_str='LSZH'):
                 isPushback = False
                 startPushback = np.nan
                 pushbackDuration = np.nan
-
-
-            # # Check if taxiDuration is less than 0 seconds. This can happen if the ground coverage is not perfect and parts of the traj are missing.
-            # if taxiDuration < timedelta(seconds=0):
-            #     diffGS = df.compute_gs.diff()
-            #     startTaxiIndex = leaveStandTimeIndex
-            #     while startTaxiIndex < df.index.max() and diffGS.loc[startTaxiIndex + 1]:
-            #         startTaxiIndex += 1
-
-            #     startTaxi = df.loc[startTaxiIndex, 'timestamp']
-            #     taxiDuration = lineupTime - startTaxi
-            #     startPushback = startTaxi - timedelta(seconds=2)
 
         # If takeoff is not pushback, check for stand
         else:
