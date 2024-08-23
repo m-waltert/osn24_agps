@@ -2,6 +2,19 @@ import traffic
 from traffic.core import Traffic
 import numpy as np
 from datetime import timedelta
+from shapely.geometry import base
+
+# def my_intersect(flight, shape):
+#     """Adaptation of def _flight_intersects() from airspace.py
+#     """
+#     # if "altitude" in flight.data.columns:
+#     #     flight = flight.query("altitude.notnull()")  # type: ignore
+#     if flight is None or (linestring := flight.linestring) is None:
+#         return False
+#     if isinstance(shape, base.BaseGeometry):
+#         bla = not linestring.intersection(shape).is_empty
+#         return (not linestring.intersection(shape).is_empty)
+#     return False
 
 
 def takeoff_detection(traj, 
@@ -34,7 +47,7 @@ def takeoff_detection(traj,
         - The function assumes that the trajectory contains data relevant to the specified airport.
 
     Example:
-        traj = takeoff_detection(traj, rwy_geometries, df_rwys, airport_str='LSZH', gsColName='ground_speed')
+        traj = takeoff_detection(traj, rwy_geometries, df_rwys, airport_str='LSZH', gsColName='compute_gs')
     """
 
     takeoffRunway = ''
@@ -44,7 +57,14 @@ def takeoff_detection(traj,
     if traj.takeoff_from(airport_str):
 
         for i, rwy in enumerate(rwy_geometries):
-            if traj.intersects(rwy):
+            # Intersection traj with rwy -> modification of flight.intersect() from traffic library
+            intersection = False
+            if traj is None or (linestring := traj.linestring) is None:
+                intersection = False
+            if isinstance(rwy, base.BaseGeometry):
+                intersection = (not linestring.intersection(rwy).is_empty)
+
+            if intersection:
 
                 # Clip traj to runway geometry
                 clipped_traj = traj.clip(rwy)
@@ -52,20 +72,9 @@ def takeoff_detection(traj,
                 if (clipped_traj is None) or (clipped_traj.data.empty): #or (clipped_traj.duration < timedelta(seconds=60)):
                     continue
 
-                # # Check whether there is a "hole" in the traj, which can happen for runway 16 departures, that cross runway 10/28 (and the software
-                # # then wrongfully assumes that it is runway 10/28 departure)
-                # time_diff = traj.inside_bbox(rwy).data['timestamp'].diff().dt.total_seconds()
-                # if time_diff.dropna().max() > maxHoleDuration:
-                #     continue
-
-                # # Check if mean track of the clipped part does not coincide with the runway heading. This can happen, for instance,
-                # # if aircraft departing on runway 16 cross runway 10/28 before takeoff
-                # TrackDifference = np.abs(clipped_traj.data.track.median() - df_rwys.iloc[2*i].bearing)
-                # if 10 < TrackDifference < 170 or TrackDifference > 190:
-                #     continue
-                # # else:
-                # #     # Runway coincides with track
-                # #     print('yes')
+                # Clipped trajs must be in rwy geometry for longer than 45 seconds
+                if clipped_traj.duration < timedelta(seconds=45):
+                    continue
 
                 # Check maximum distance of clipped traj to rwy geometry. If distance it "too" large, this mean that clipped traj moves away from
                 # the runway. This can happen, for instance,  with the rwy10/28 geometry with aircraft departing on runway 16 that cross runway 
@@ -81,14 +90,19 @@ def takeoff_detection(traj,
                 #last_60min_data = traj.last(minutes=60)
 
                 # Calculate ground speed and vertical rate
-                median_gs = first_5sec[gsColName].median() if not first_5sec[gsColName].isna().all() else np.nan
+                median_gs = np.nanmedian(first_5sec[gsColName]) if not first_5sec[gsColName].isna().all() else np.nan
                 median_rate = np.nanmedian(last_5sec.vertical_rate) if not last_5sec.vertical_rate.isna().all() else np.nan
+                median_cumdistDiff = np.nanmedian(last_5sec.cumdist.diff()) if not last_5sec.cumdist.isna().all() else np.nan
 
-                if (median_gs < 30) and (median_rate > 500) and not last_20sec.empty:
+                # It is a take-off if:
+                # median_gs in first 5 seconds is less than 30kt, AND
+                # (median vertical speed > 500ft/min OR change in cumulative distance per second > 0.0277nm, which is equal to 100kt) in the last 5 seconds
+                if (median_gs < 30) and ((median_rate > 500) or median_cumdistDiff > 0.0277) and not last_20sec.empty:
                     isTakeoff = True
 
                     # Mean track during take-off
-                    median_track = last_20sec.track.median()
+                    # median_track = last_20sec.track.median()
+                    median_track = last_20sec.compute_track.median()
 
                     # Line-up time
                     lineupTime = clipped_traj.start
