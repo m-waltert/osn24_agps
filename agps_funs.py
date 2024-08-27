@@ -3,6 +3,9 @@ from traffic.core import Traffic
 import numpy as np
 from datetime import timedelta
 from shapely.geometry import base
+import pandas as pd
+
+from openap import prop
 
 # def my_intersect(flight, shape):
 #     """Adaptation of def _flight_intersects() from airspace.py
@@ -233,3 +236,132 @@ def alternative_pushback_detection(traj, standAreas, airport_str='LSZH'):
     traj.data.loc[:, 'taxiDuration'] = taxiDuration
 
     return traj
+
+
+
+
+def getIdleFF(aircraftType: str) -> float:
+    """
+    Retrieves idle fuel flow (FF) based on the aircraft type according to the ICAO Aircraft Emission Database.
+    Idle refers to 7% thrust.
+
+    For aircraft in openap.prop.available_aircraft(), the default engine is used.
+    For aircraft not included, specific engine mappings are applied.
+
+    Args:
+        aircraftType (str): The type of aircraft.
+
+    Returns:
+        float: The idle fuel flow (FF) rate for the specified aircraft type.
+    """
+
+    # Mapping of aircraft types to their corresponding engines for non-standard cases
+    ac2eng = {
+        'A35K': 'trent xwb-97',
+        'CRJ9': 'CF34-8C5',
+        'B77L': 'Trent 892',
+        'BCS1': 'PW1524G',                  # (Luftfahrzeugregister CH)
+        'BCS3': 'PW1524G',
+        'B78X': 'Trent 1000-K2',
+        'E290': 'PW1919G',                  # (Luftfahrzeugregister CH)
+        'E295': 'PW1921G',                  # (Luftfahrzeugregister CH)
+    }
+
+
+    try:
+        # Check if the aircraft is available in the database
+        aircraft = prop.aircraft(aircraftType)
+        engine_type = aircraft['engine']['default']
+    except RuntimeError:
+        # Use predefined engine mapping if the aircraft is not available in the database
+        if aircraftType in ac2eng:
+            engine_type = ac2eng[aircraftType]
+        else:
+            raise ValueError(f"Aircraft type '{aircraftType}' not recognized or not available in the database.")
+
+    # Retrieve engine properties
+    engine = prop.engine(engine_type)
+    
+    # Extract idle fuel flow
+    ff_idle = engine['ff_idl']
+
+
+    return ff_idle
+
+
+
+def getAPUfuel_df() -> pd.DataFrame:
+    """
+    Creates a DataFrame containing APU fuel consumption data.
+
+    Returns:
+        pd.DataFrame: A DataFrame with APU fuel consumption details for different aircraft types and 
+        APU operating modes. Data is based on ICAO Document 9889 Table 3-A1-5: APU Fuel Groups ("Advanced 
+        approach to calculate fuel consumption")
+    """
+    data = {
+        'APU fuel group': [
+            'Business jets/regional jets (seats < 100)',
+            'Smaller (100 ≤ seats < 200), newer types',
+            'Smaller (100 ≤ seats < 200), older types',
+            'Mid-range (200 ≤ seats < 300), all types',
+            'Larger (300 ≤ seats), older types',
+            'Larger (300 ≤ seats), newer types'
+        ],
+    'startup': [68, 77, 69, 108, 106, 146],                 # Start-up No load (kg/h)
+    'normal': [101, 110, 122, 164, 202, 238],               # Normal running Maximum ECS (kg/h)
+    'high': [110, 130, 130, 191, 214, 262]                 # High load Main engine start (kg/h)
+    }
+
+    return pd.DataFrame(data)
+
+
+def getAPUfuel(aircraftType: str, df_apu: pd.DataFrame) -> pd.Series:
+    """
+    Gets the APU fuel consumption for a given aircraft type.
+
+    Args:
+        aircraftType (str): The type of aircraft.
+        df_apu (pd.DataFrame): The DataFrame containing APU fuel data.
+
+    Returns:
+        pd.Series: A series containing the fuel consumption for startup, normal, and high load for the specified aircraft type.
+    """
+    # Define maximum passengers for specific aircraft types not in prop
+    ac2maxpax = {
+        'BCS1': 110,
+        'BCS3': 130,
+        'E290': 120,
+        'E295': 132,
+        'A35K': 350,
+        'CRJ9': 90,
+        'B77L': 320,
+        'B78X': 300,
+    }
+
+    # List of older aircraft models
+    oldAC = {'B733', 'B734', 'B735', 'B772', 'B762', 'B763', 'B752', 'B753', 'A343'}
+
+    # Check if aircraft is considered old
+    is_old = aircraftType in oldAC
+
+    # Get maximum passenger count or default to a lookup if not found in prop
+    try:
+        maxPax = prop.aircraft(aircraftType)['pax']['max']
+    except RuntimeError:
+        maxPax = ac2maxpax.get(aircraftType)
+        if maxPax is None:
+            raise ValueError(f"Aircraft type '{aircraftType}' not recognized or not available in the database.")
+
+    # Determine the index to use for APU fuel data lookup
+    if maxPax < 100:
+        idx = 0
+    elif 100 <= maxPax < 200:
+        idx = 2 if is_old else 1
+    elif 200 <= maxPax < 300:
+        idx = 3
+    else:
+        idx = 4 if is_old else 5
+
+    # Return the selected row as a Series from the DataFrame
+    return df_apu.iloc[idx]
