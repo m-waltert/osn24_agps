@@ -267,12 +267,13 @@ def getIdleFF(aircraftType: str) -> float:
         'E295': 'PW1921G',                  # (Luftfahrzeugregister CH)
     }
 
+    aircraftType = aircraftType.upper()
 
     try:
         # Check if the aircraft is available in the database
         aircraft = prop.aircraft(aircraftType)
         engine_type = aircraft['engine']['default']
-    except RuntimeError:
+    except:
         # Use predefined engine mapping if the aircraft is not available in the database
         if aircraftType in ac2eng:
             engine_type = ac2eng[aircraftType]
@@ -299,6 +300,7 @@ def getAPUfuel_df() -> pd.DataFrame:
         APU operating modes. Data is based on ICAO Document 9889 Table 3-A1-5: APU Fuel Groups ("Advanced 
         approach to calculate fuel consumption")
     """
+
     data = {
         'APU fuel group': [
             'Business jets/regional jets (seats < 100)',
@@ -327,6 +329,9 @@ def getAPUfuel(aircraftType: str, df_apu: pd.DataFrame) -> pd.Series:
     Returns:
         pd.Series: A series containing the fuel consumption for startup, normal, and high load for the specified aircraft type.
     """
+
+    aircraftType = aircraftType.upper()
+
     # Define maximum passengers for specific aircraft types not in prop
     ac2maxpax = {
         'BCS1': 110,
@@ -348,7 +353,7 @@ def getAPUfuel(aircraftType: str, df_apu: pd.DataFrame) -> pd.Series:
     # Get maximum passenger count or default to a lookup if not found in prop
     try:
         maxPax = prop.aircraft(aircraftType)['pax']['max']
-    except RuntimeError:
+    except:
         maxPax = ac2maxpax.get(aircraftType)
         if maxPax is None:
             raise ValueError(f"Aircraft type '{aircraftType}' not recognized or not available in the database.")
