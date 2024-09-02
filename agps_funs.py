@@ -1,4 +1,4 @@
-from agps_config import AIRCRAFT_INFO, DEFAULT_STARTUP_TIME, DEFAULT_WARMUP_TIME, DF_APU, OLD_AIRCRAFT
+from agps_config import AIRCRAFT_INFO, DEFAULT_STARTUP_TIME, DEFAULT_WARMUP_TIME, DF_APU, OLD_AIRCRAFT, AC2CONSIDER
 import traffic
 from traffic.core import Traffic
 import numpy as np
@@ -255,7 +255,7 @@ def alternative_pushback_detection(traj, standAreas, airport_str='LSZH'):
 
         # TaxiTime NoMovement
         
-    # Write date to traj
+    # Write data to traj
     traj.data.loc[:, 'isPushback'] = isPushback
     traj.data.loc[:, 'startPushback'] = startPushback
     traj.data.loc[:, 'startTaxi'] = startTaxi
@@ -264,6 +264,60 @@ def alternative_pushback_detection(traj, standAreas, airport_str='LSZH'):
     traj.data.loc[:, 'taxiDistance'] = taxiDistance
 
     return traj
+
+
+def normalTaxiFuel(traj):
+
+    MESengine = np.nan
+    MESapu = np.nan
+    normTAXIengine = np.nan
+
+    isTakeoff = traj.data.isTakeoff.iloc[0]
+    typecode = traj.data.typecode.iloc[0]
+
+    if isTakeoff and (typecode in AC2CONSIDER):
+
+        # Fuel for main engine start (MES), for engine and for APU
+        MESengine = fuelMESengine(typecode, startupTime=DEFAULT_STARTUP_TIME, warmupTime=DEFAULT_WARMUP_TIME)
+        MESapu = fuelMESapu(typecode, startupTime=DEFAULT_STARTUP_TIME, warmupTime=DEFAULT_WARMUP_TIME)
+
+        # Taxi Fuel with engines running
+        startTaxi = traj.data.startTaxi.iloc[0]
+        lineupTime = traj.data.lineupTime.iloc[0]
+        if (startTaxi is not np.nan) and (lineupTime is not np.nan):
+            normTAXIengine = fuelTaxiEngine(typecode, startTaxi, lineupTime)
+
+    
+    # Write data to traj
+    traj.data.loc[:, 'MESengine'] = MESengine
+    traj.data.loc[:, 'MESapu'] = MESapu
+    traj.data.loc[:, 'normTAXIengine'] = normTAXIengine
+    
+
+    return traj
+
+
+def extAGPSTaxiFuel(traj, startupTime=DEFAULT_STARTUP_TIME, warmupTime=DEFAULT_WARMUP_TIME):
+    ECSapu = np.nan
+    extAGPStug = np.nan
+
+    isTakeoff = traj.data.isTakeoff.iloc[0]
+    typecode = traj.data.typecode.iloc[0]
+
+    if isTakeoff and (typecode in AC2CONSIDER):
+        startTaxi = traj.data.startTaxi.iloc[0]
+        lineupTime = traj.data.lineupTime.iloc[0]
+        taxiDuration = lineupTime - startTaxi
+
+        # Calculate fuel required for ECS of APU during external AGPS operaitons
+        if taxiDuration > timedelta(seconds=0):
+            ECSapu = fuelECSapu(typecode, agpsDuration=taxiDuration)
+
+    traj.data.loc[:, 'extAGPSapu'] = ECSapu
+    traj.data.loc[:, 'extAGPStug'] = extAGPStug
+
+    return traj
+
 
 
 
