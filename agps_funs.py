@@ -246,7 +246,7 @@ def alternative_pushback_detection(traj, standAreas, airport_str='LSZH'):
         taxiDuration = lineupTime - startTaxi
 
         # Calcualte taxiDistance
-        if (taxiDuration is not np.nan) or taxiDuration <= timedelta(seconds=0):
+        if (taxiDuration is not np.nan) and (taxiDuration > timedelta(seconds=0)):
             taxi = traj.between(startTaxi, lineupTime)
             taxiDistance = taxi.data.cumdist.iloc[-1] - taxi.data.cumdist.iloc[0]
 
