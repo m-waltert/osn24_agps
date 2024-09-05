@@ -8,3 +8,6 @@ LSZH_JUL24.pkl
 check_flights.pdf
 df_movements.pkl
 df_movements_JUL24.pkl
+LSZH_JUL24_Takeoffs.pkl
+__pycache__/agps_config.cpython-310.pyc
+__pycache__/agps_funs.cpython-310.pyc
