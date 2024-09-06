@@ -1,13 +1,20 @@
 from agps_config import AIRCRAFT_INFO, DEFAULT_STARTUP_TIME, DEFAULT_WARMUP_TIME, DF_APU, OLD_AIRCRAFT, AC2CONSIDER
 import traffic
 from traffic.core import Traffic
+from traffic.data import airports
 import numpy as np
 from datetime import timedelta
 from shapely.geometry import base
 import pandas as pd
 import datetime
-
+import os
 from openap import prop
+
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_pdf import PdfPages
+from cartes.crs import EuroPP
+import cartopy.crs as ccrs
+data_proj = ccrs.PlateCarree()
 
 # def my_intersect(flight, shape):
 #     """Adaptation of def _flight_intersects() from airspace.py
@@ -739,3 +746,66 @@ def fuelECSapu(typecode: str,
     fuelConsumption = apuFuel['normal'] / 3600 * agpsDuration.total_seconds()
 
     return fuelConsumption
+
+
+
+def plotTrajs2PDF(df_movements, 
+                  gnd_trajs, 
+                  nPages: int, 
+                  trajsPerPage: int,
+                  airport_str = 'LSZH',
+                  rwys = [],
+                  dir_path=os.getcwd(),
+                  plotName='check_flights.pdf',
+                  colors = ['r', 'b', 'g', 'y', 'c']):
+
+    plot_path = dir_path + '/' + plotName
+
+    if trajsPerPage > len(colors):
+        trajsPerPage = len(colors)
+
+    # Sample all flight_id once (n_Pages * trajsPerPage)
+    total_sample_size = nPages * trajsPerPage
+
+    if total_sample_size > len(df_movements):
+        nPages = np.floor(len(df_movements)/trajsPerPage)
+        total_sample_size = nPages * trajsPerPage
+
+    sample = df_movements.sample(n=total_sample_size, replace=False)
+
+    # Access gnd_trajs once (access is slow due to its size)
+    trajs_tmp = gnd_trajs[sample.flight_id.values]
+
+    # Split the sample into smaller chunks for each page
+    sample_chunks = [sample[i:i + trajsPerPage] for i in range(0, len(sample), trajsPerPage)]
+
+    with PdfPages(plot_path) as pdf:
+        # Iterate over each chunk for plotting
+        for repeat, sample_chunk in enumerate(sample_chunks):
+            fig, ax = plt.subplots(1, 1, figsize=(12, 12), subplot_kw=dict(projection=EuroPP()))
+            airports[airport_str].plot(ax, by='aeroway', aerodrome=dict(alpha=0))
+            ax.spines["geo"].set_visible(False)
+            ax.set_extent((8.5230, 8.5855, 47.4904, 47.4306))
+
+            # Plot runway geometries once
+            for rwy in rwys:
+                ax.plot(*rwy.exterior.xy, transform=data_proj, color='m')
+
+            # Plot the trajectories for the current chunk
+            for i, (index, flt) in enumerate(sample_chunk.iterrows()):
+                
+                # Plot the entire trajectory
+                trajs_tmp[flt.flight_id].plot(ax=ax, color=colors[i], label=f'{flt.flight_id} RWY {flt.takeoffRunway} d={round(flt.taxiDistance,2)}')
+
+                # Highlight taxi part
+                trajs_tmp[flt.flight_id].between(flt.startTaxi, flt.lineupTime).plot(ax=ax, color=colors[i], linewidth=4)
+
+                # Mark pushback part if applicable
+                if flt.isPushback:
+                    trajs_tmp[flt.flight_id].between(flt.startPushback, flt.startTaxi).plot(ax=ax, color='m', linewidth=4)
+
+            plt.legend(loc='upper right')
+            pdf.savefig()  # Save the current page into the PDF
+            plt.close()  # Close the plot to free memory
+
+    return
