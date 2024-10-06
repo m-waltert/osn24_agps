@@ -1,4 +1,5 @@
 import pandas as pd
+from shapely.geometry import Polygon
 
 #%%
 # Only consider the following typecodes
@@ -120,7 +121,7 @@ DEFAULT_WARMUP_TIME = 120                # Duration of warm-up period required a
 #%% 
 
 
-# APU Fuel Flow Data
+# APU Fuel Flow Data, based on ICAO Doc 9889 Airport Air Quality Manual, Table 3-A1-6. APU fuel group 
 data = {
     'APU fuel group': [
         'Business jets/regional jets (seats < 100)',
@@ -137,3 +138,77 @@ data = {
 
 DF_APU = pd.DataFrame(data)
 
+
+def get_Stands_LSZH():
+
+    stands = []
+
+    # # Dock E Stands
+    # stands.append(Polygon(shell=((8.559361, 47.461887),
+    #                              (8.549978, 47.462542),
+    #                              (8.551437, 47.460347),
+    #                              (8.559075, 47.459822))))
+
+
+    # Dock E Stands (area slightly extended in order to improve pushback detection)
+    stands.append(Polygon(shell=((8.549924, 47.462661),
+                                (8.551635, 47.460186),
+                                (8.559250, 47.459671),
+                                (8.559618, 47.462015))))
+
+    # Dock A Stands
+    stands.append(Polygon(shell=((8.555001, 47.454855),
+                                (8.556140, 47.453175),
+                                (8.560965, 47.452810),
+                                (8.562083, 47.454330))))
+
+    # # Dock B Stands
+    # stands.append(Polygon(shell=((8.560488, 47.451963),
+    #                              (8.556346, 47.452250),
+    #                              (8.557920, 47.450010),
+    #                              (8.560157, 47.449799))))
+
+    # Dock B Stands (area slightly extended in order to improve pushback detection)
+    stands.append(Polygon(shell=((8.556163, 47.452404),
+                                (8.558079, 47.449825),
+                                (8.559995, 47.449686),
+                                (8.560519, 47.452131))))
+
+    # Charlie Stands
+    stands.append(Polygon(shell=((8.560601, 47.448472),
+                                (8.562883, 47.445380),
+                                (8.563924, 47.445758),
+                                (8.561669, 47.448833))))
+
+    # Golf Stands (east part)
+    stands.append(Polygon(shell=((8.562589, 47.440829),
+                                (8.561054, 47.443088),
+                                (8.560208, 47.442844),
+                                (8.561806, 47.440590))))
+
+    # Golf Stands (west part)
+    stands.append(Polygon(shell=((8.563977, 47.441257),
+                                (8.563025, 47.442721),
+                                (8.562171, 47.442462),
+                                (8.563191, 47.441011))))
+
+    # Papa Stands
+    stands.append(Polygon(shell=((8.551049, 47.463711),
+                                (8.550944, 47.463068),
+                                (8.553608, 47.462883),
+                                (8.553666, 47.463552))))
+
+    # Tango Stands
+    stands.append(Polygon(shell=((8.561366, 47.443951),
+                                (8.562294, 47.443334),
+                                (8.563789, 47.443741),
+                                (8.563284, 47.444532))))
+
+    # Whiskey Stands
+    stands.append(Polygon(shell=((8.546829, 47.454721),
+                                (8.545534, 47.454426),
+                                (8.547307, 47.452003),
+                                (8.548511, 47.452336))))
+
+
+    return stands
