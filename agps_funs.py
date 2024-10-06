@@ -5,141 +5,265 @@ from traffic.data import airports
 import numpy as np
 from datetime import timedelta
 from shapely.geometry import base
+from shapely.geometry import LineString
 import pandas as pd
 import datetime
 import os
 from openap import prop
-
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 from cartes.crs import EuroPP
 import cartopy.crs as ccrs
 data_proj = ccrs.PlateCarree()
 
-# def my_intersect(flight, shape):
-#     """Adaptation of def _flight_intersects() from airspace.py
-#     """
-#     # if "altitude" in flight.data.columns:
-#     #     flight = flight.query("altitude.notnull()")  # type: ignore
-#     if flight is None or (linestring := flight.linestring) is None:
-#         return False
-#     if isinstance(shape, base.BaseGeometry):
-#         bla = not linestring.intersection(shape).is_empty
-#         return (not linestring.intersection(shape).is_empty)
-#     return False
+
+def get_lon_lat_by_runway(df_runways, runway_name):
+    row = df_runways[df_runways['name'] == runway_name]
+    if not row.empty:
+        lat = row.iloc[0]['latitude']
+        lon = row.iloc[0]['longitude']
+        return lon, lat
+    else:
+        return None, None
+    
+# Function to extend a point in the direction of another point
+def extend_point(p1, p2, distance):
+    # Calculate direction vector
+    direction = np.array(p2) - np.array(p1)
+    direction = direction / np.linalg.norm(direction)  # Normalize the vector
+    # Extend the point
+    new_point = np.array(p1) - direction * distance
+    return tuple(new_point)
+
+def find_opposite_runway(runway):
+    # Extract the number part of the runway
+    number_part = int(runway[:-1] if runway[-1] in "LRC" else runway)
+    
+    # Compute the opposite runway number by adding/subtracting 18
+    opposite_number = (number_part + 18) % 36
+    if opposite_number == 0:
+        opposite_number = 36
+
+    # Format the number with leading zero if it's less than 10
+    opposite_number_str = f"{opposite_number:02d}"
+
+    # Handle the suffix if present
+    if runway[-1] == 'L':
+        suffix = 'R'
+    elif runway[-1] == 'R':
+        suffix = 'L'
+    elif runway[-1] == 'C':
+        suffix = 'C'
+    else:
+        suffix = ''
+
+    # Combine the opposite number with the suffix
+    return f"{opposite_number_str}{suffix}"
+
+def get_Box_around_Rwy(Rwy: str,
+                       airport_str: str,
+                       extension_distance=0.002,
+                       extension_width = 0.0004):
+
+    # Find runway opposite to rwy
+    oppositeRwy = find_opposite_runway(Rwy)
+
+    # Get runway data from traffic library
+    runways = airports[airport_str].runways.data
+
+    # Define the coordinates of the two points
+    lon1, lat1 = get_lon_lat_by_runway(runways, Rwy)
+    lon2, lat2 = get_lon_lat_by_runway(runways, oppositeRwy)
+
+    # Define the coordinates of the two points
+    point1 = (lon1, lat1)
+    point2 = (lon2, lat2)
+
+    # Create a LineString object
+    rwy = LineString([point1, point2])
+
+    # Extend both ends of the line
+    rwy_box = LineString([extend_point(point2, point1, extension_distance),
+                          extend_point(point1, point2, extension_distance)])
+
+    # Extend width by buffering
+    rwy_box = rwy_box.buffer(distance=extension_width, cap_style='square')
+    return rwy_box
 
 
-def takeoff_detection(traj, 
-                      rwy_geometries, 
-                      df_rwys, 
-                      airport_str='LSZH',
-                      gsColName='compute_gs'):
+def takeoff_detection(traj,
+                       airport_str = 'LSZH'
+                       ) -> str:
     """
-    Detects the takeoff event from a given trajectory and associates the takeoff with the runway of an airport.
+    Detects takeoff events from a given aircraft trajectory and updates trajectory data.
 
-    This function analyzes a flight trajectory to determine if a takeoff has occurred at a specified airport.
-    It uses runway geometries and other flight data to detect takeoff events and identify the runway used 
-    for takeoff. If a takeoff is detected, the function adds relevant information to the trajectory data, 
-    including the lineup time, takeoff runway, and a boolean flag indicating whether a takeoff was detected.
+    This function determines if a given trajectory corresponds to a takeoff at a specified airport. 
+    If a takeoff is detected, the runway used for takeoff and the lineup time are identified and 
+    appended to the trajectory data.
 
     Args:
-        traj (Trajectory): A traffic flight object
-        rwy_geometries (list of shapely.geometry.Polygon): A list of runway geometries (polygons) representing 
-                                                           the airport's runways.
-        df_rwys (pandas.DataFrame): A DataFrame containing runway information for the specified airport, 
-                                    including runway names and bearings.
-        airport_str (str): The ICAO code of the airport to check for takeoff. Defaults to 'LSZH'.
-        gsColName (str, optional): The name of the column in `traj` that contains ground speed data. Defaults to 'compute_gs'.
+        traj (Trajectory): The trajectory object containing flight data, including positions 
+                           and timestamps.
+        airport_str (str, optional): The ICAO code of the airport to detect takeoff from.
+                                     Defaults to 'LSZH' (Zurich Airport).
 
     Returns:
-        Trajectory: The input `Trajectory` object with additional columns:
-                    - 'lineupTime': The timestamp of the aircraft's lineup on the runway, or NaN if no takeoff was detected.
-                    - 'takeoffRunway': The name of the detected takeoff runway, or an empty string if no takeoff was detected.
-                    - 'isTakeoff': A boolean indicating whether a takeoff was detected.
-
+        Trajectory: The input trajectory with updated attributes:
+            - 'lineupTime2' (float): The time of lineup on the runway, or NaN if no takeoff.
+            - 'takeoffRunway2' (str): The runway used for takeoff, or an empty string if none.
+            - 'isTakeoff2' (bool): Boolean flag indicating whether a takeoff was detected.
+    
     Notes:
-        - The function assumes that the input `Trajectory` contains data relevant to the specified airport.
-        - The function checks each runway geometry to see if the trajectory intersects it, suggesting a possible takeoff.
-        - For a takeoff to be confirmed:
-          1. The trajectory must intersect with a runway geometry for at least 45 seconds.
-          2. The distance from the part of the trajectory clipped to the corresponding runway geometry must not exceed 200 meters.
-          3. The ground speed in the first 5 seconds of the clipped part must be less than 30 knots.
-          4. The vertical rate in the last 5 seconds of the clipped part must be greater than 500 feet per minute, or the change in 
-             cumulative distance per second must exceed 0.0277 nautical miles (equivalent to 100 knots).
+        - The function uses a runway geometry box to detect whether the trajectory aligns with 
+          the takeoff process.
+        - The trajectory is clipped to the box around the runway for better accuracy in detecting 
+          the takeoff.
 
     Example:
-        >>> traj = takeoff_detection(traj, rwy_geometries, df_rwys, airport_str='LSZH', gsColName='compute_gs')
+        >>> updated_traj = takeoff_detection(traj, airport_str='LSZH')
     """
-     
-    takeoffRunway = ''
+    
     lineupTime = np.nan
     isTakeoff = False
 
-    if traj.takeoff_from(airport_str):
+    # Classification of takeoff using new routine
+    takeoffRunway = traj.get_toff_runway(airport_str)
 
-        for i, rwy in enumerate(rwy_geometries):
-            # Intersection traj with rwy -> modification of flight.intersect() from traffic library
-            intersection = False
-            if traj is None or (linestring := traj.linestring) is None:
-                intersection = False
-            if isinstance(rwy, base.BaseGeometry):
-                intersection = (not linestring.intersection(rwy).is_empty)
+    if takeoffRunway is not None:
+        isTakeoff = True
 
-            if intersection:
+        # Get runway geometry (box around runway)
+        rwy_box = get_Box_around_Rwy(takeoffRunway, airport_str)
 
-                # Clip traj to runway geometry
-                clipped_traj = traj.clip(rwy)
+        clipped_traj = traj.clip(rwy_box)
 
-                if (clipped_traj is None) or (clipped_traj.data.empty): #or (clipped_traj.duration < timedelta(seconds=60)):
-                    continue
+        if clipped_traj is not None and not clipped_traj.data.empty:
+            lineupTime = clipped_traj.start
+    else:
+        takeoffRunway=''
 
-                # Clipped trajs must be in rwy geometry for longer than 45 seconds
-                if clipped_traj.duration < timedelta(seconds=45):
-                    continue
-
-                # Check maximum distance of clipped traj to rwy geometry. If distance it "too" large, this mean that clipped traj moves away from
-                # the runway. This can happen, for instance,  with the rwy10/28 geometry with aircraft departing on runway 16 that cross runway 
-                # 10/28 before takeoff
-                maxDistfromRwy = clipped_traj.distance(rwy).data.distance.max()
-                if np.abs(maxDistfromRwy) > 200:
-                    continue
-
-                # Cache traj snippets
-                first_5sec = clipped_traj.first(seconds=5).data
-                last_5sec = clipped_traj.last(seconds=5).data
-                last_20sec = clipped_traj.last(seconds=20).data
-                #last_60min_data = traj.last(minutes=60)
-
-                # Calculate ground speed and vertical rate
-                median_gs = np.nanmedian(first_5sec[gsColName]) if not first_5sec[gsColName].isna().all() else np.nan
-                median_rate = np.nanmedian(last_5sec.vertical_rate) if not last_5sec.vertical_rate.isna().all() else np.nan
-                median_cumdistDiff = np.nanmedian(last_5sec.cumdist.diff()) if not last_5sec.cumdist.isna().all() else np.nan
-
-                # It is a take-off if:
-                # median_gs in first 5 seconds is less than 30kt, AND
-                # (median vertical speed > 500ft/min OR change in cumulative distance per second > 0.0277nm, which is equal to 100kt) in the last 5 seconds
-                if (median_gs < 30) and ((median_rate > 500) or median_cumdistDiff > 0.0277) and not last_20sec.empty:
-                    isTakeoff = True
-
-                    # Mean track during take-off
-                    # median_track = last_20sec.track.median()
-                    median_track = last_20sec.compute_track.median()
-
-                    # Line-up time
-                    lineupTime = clipped_traj.start
-
-                    # Find the takeoff runway
-                    runwayBearings = df_rwys.iloc[2*i:2*i+2].bearing
-                    idx = (runwayBearings - median_track).abs().idxmin()
-                    takeoffRunway = df_rwys.name.loc[idx]
-
-                    break
-
+    traj.data = traj.data.copy()
     traj.data.loc[:, 'lineupTime'] = lineupTime
     traj.data.loc[:, 'takeoffRunway'] = takeoffRunway
     traj.data.loc[:, 'isTakeoff'] = isTakeoff
 
     return traj
+
+
+#######
+# THIS IS THE OLD TAKEOFF DETECTION FUNCTION
+#######
+# def takeoff_detection(traj, 
+#                       rwy_geometries, 
+#                       df_rwys, 
+#                       airport_str='LSZH',
+#                       gsColName='compute_gs'):
+#     """
+#     Detects the takeoff event from a given trajectory and associates the takeoff with the runway of an airport.
+
+#     This function analyzes a flight trajectory to determine if a takeoff has occurred at a specified airport.
+#     It uses runway geometries and other flight data to detect takeoff events and identify the runway used 
+#     for takeoff. If a takeoff is detected, the function adds relevant information to the trajectory data, 
+#     including the lineup time, takeoff runway, and a boolean flag indicating whether a takeoff was detected.
+
+#     Args:
+#         traj (Trajectory): A traffic flight object
+#         rwy_geometries (list of shapely.geometry.Polygon): A list of runway geometries (polygons) representing 
+#                                                            the airport's runways.
+#         df_rwys (pandas.DataFrame): A DataFrame containing runway information for the specified airport, 
+#                                     including runway names and bearings.
+#         airport_str (str): The ICAO code of the airport to check for takeoff. Defaults to 'LSZH'.
+#         gsColName (str, optional): The name of the column in `traj` that contains ground speed data. Defaults to 'compute_gs'.
+
+#     Returns:
+#         Trajectory: The input `Trajectory` object with additional columns:
+#                     - 'lineupTime': The timestamp of the aircraft's lineup on the runway, or NaN if no takeoff was detected.
+#                     - 'takeoffRunway': The name of the detected takeoff runway, or an empty string if no takeoff was detected.
+#                     - 'isTakeoff': A boolean indicating whether a takeoff was detected.
+
+#     Notes:
+#         - The function assumes that the input `Trajectory` contains data relevant to the specified airport.
+#         - The function checks each runway geometry to see if the trajectory intersects it, suggesting a possible takeoff.
+#         - For a takeoff to be confirmed:
+#           1. The trajectory must intersect with a runway geometry for at least 45 seconds.
+#           2. The distance from the part of the trajectory clipped to the corresponding runway geometry must not exceed 200 meters.
+#           3. The ground speed in the first 5 seconds of the clipped part must be less than 30 knots.
+#           4. The vertical rate in the last 5 seconds of the clipped part must be greater than 500 feet per minute, or the change in 
+#              cumulative distance per second must exceed 0.0277 nautical miles (equivalent to 100 knots).
+
+#     Example:
+#         >>> traj = takeoff_detection(traj, rwy_geometries, df_rwys, airport_str='LSZH', gsColName='compute_gs')
+#     """
+     
+#     takeoffRunway = ''
+#     lineupTime = np.nan
+#     isTakeoff = False
+
+#     if traj.takeoff_from(airport_str):
+
+#         for i, rwy in enumerate(rwy_geometries):
+#             # Intersection traj with rwy -> modification of flight.intersect() from traffic library
+#             intersection = False
+#             if traj is None or (linestring := traj.linestring) is None:
+#                 intersection = False
+#             if isinstance(rwy, base.BaseGeometry):
+#                 intersection = (not linestring.intersection(rwy).is_empty)
+
+#             if intersection:
+
+#                 # Clip traj to runway geometry
+#                 clipped_traj = traj.clip(rwy)
+
+#                 if (clipped_traj is None) or (clipped_traj.data.empty): #or (clipped_traj.duration < timedelta(seconds=60)):
+#                     continue
+
+#                 # Clipped trajs must be in rwy geometry for longer than 45 seconds
+#                 if clipped_traj.duration < timedelta(seconds=45):
+#                     continue
+
+#                 # Check maximum distance of clipped traj to rwy geometry. If distance it "too" large, this mean that clipped traj moves away from
+#                 # the runway. This can happen, for instance,  with the rwy10/28 geometry with aircraft departing on runway 16 that cross runway 
+#                 # 10/28 before takeoff
+#                 maxDistfromRwy = clipped_traj.distance(rwy).data.distance.max()
+#                 if np.abs(maxDistfromRwy) > 200:
+#                     continue
+
+#                 # Cache traj snippets
+#                 first_5sec = clipped_traj.first(seconds=5).data
+#                 last_5sec = clipped_traj.last(seconds=5).data
+#                 last_20sec = clipped_traj.last(seconds=20).data
+#                 #last_60min_data = traj.last(minutes=60)
+
+#                 # Calculate ground speed and vertical rate
+#                 median_gs = np.nanmedian(first_5sec[gsColName]) if not first_5sec[gsColName].isna().all() else np.nan
+#                 median_rate = np.nanmedian(last_5sec.vertical_rate) if not last_5sec.vertical_rate.isna().all() else np.nan
+#                 median_cumdistDiff = np.nanmedian(last_5sec.cumdist.diff()) if not last_5sec.cumdist.isna().all() else np.nan
+
+#                 # It is a take-off if:
+#                 # median_gs in first 5 seconds is less than 30kt, AND
+#                 # (median vertical speed > 500ft/min OR change in cumulative distance per second > 0.0277nm, which is equal to 100kt) in the last 5 seconds
+#                 if (median_gs < 30) and ((median_rate > 500) or median_cumdistDiff > 0.0277) and not last_20sec.empty:
+#                     isTakeoff = True
+
+#                     # Mean track during take-off
+#                     # median_track = last_20sec.track.median()
+#                     median_track = last_20sec.compute_track.median()
+
+#                     # Line-up time
+#                     lineupTime = clipped_traj.start
+
+#                     # Find the takeoff runway
+#                     runwayBearings = df_rwys.iloc[2*i:2*i+2].bearing
+#                     idx = (runwayBearings - median_track).abs().idxmin()
+#                     takeoffRunway = df_rwys.name.loc[idx]
+
+#                     break
+
+#     traj.data.loc[:, 'lineupTime'] = lineupTime
+#     traj.data.loc[:, 'takeoffRunway'] = takeoffRunway
+#     traj.data.loc[:, 'isTakeoff'] = isTakeoff
+
+#     return traj
 
 
 def alternative_pushback_detection(traj, standAreas, airport_str='LSZH'):
