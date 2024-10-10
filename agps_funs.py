@@ -126,21 +126,23 @@ def takeoff_detection(traj,
     lineupTime = np.nan
     isTakeoff = False
 
-    # Classification of takeoff using new routine
-    takeoffRunway = traj.get_toff_runway(airport_str)
+    if ~traj.landing_at(airport_str):
 
-    if takeoffRunway is not None:
-        isTakeoff = True
+        # Classification of takeoff using new routine
+        takeoffRunway = traj.get_toff_runway(airport_str)
 
-        # Get runway geometry (box around runway)
-        rwy_box = get_Box_around_Rwy(takeoffRunway, airport_str)
+        if takeoffRunway is not None:
+            isTakeoff = True
 
-        clipped_traj = traj.clip(rwy_box)
+            # Get runway geometry (box around runway)
+            rwy_box = get_Box_around_Rwy(takeoffRunway, airport_str)
 
-        if clipped_traj is not None and not clipped_traj.data.empty:
-            lineupTime = clipped_traj.start
-    else:
-        takeoffRunway=''
+            clipped_traj = traj.clip(rwy_box)
+
+            if clipped_traj is not None and not clipped_traj.data.empty:
+                lineupTime = clipped_traj.start
+        else:
+            takeoffRunway=''
 
     traj.data = traj.data.copy()
     traj.data.loc[:, 'lineupTime'] = lineupTime
@@ -153,117 +155,118 @@ def takeoff_detection(traj,
 #######
 # THIS IS THE OLD TAKEOFF DETECTION FUNCTION
 #######
-# def takeoff_detection(traj, 
-#                       rwy_geometries, 
-#                       df_rwys, 
-#                       airport_str='LSZH',
-#                       gsColName='compute_gs'):
-#     """
-#     Detects the takeoff event from a given trajectory and associates the takeoff with the runway of an airport.
+def takeoff_detection_old(traj, 
+                      rwy_geometries, 
+                      df_rwys, 
+                      airport_str='LSZH',
+                      gsColName='compute_gs'):
+    """
+    Detects the takeoff event from a given trajectory and associates the takeoff with the runway of an airport.
 
-#     This function analyzes a flight trajectory to determine if a takeoff has occurred at a specified airport.
-#     It uses runway geometries and other flight data to detect takeoff events and identify the runway used 
-#     for takeoff. If a takeoff is detected, the function adds relevant information to the trajectory data, 
-#     including the lineup time, takeoff runway, and a boolean flag indicating whether a takeoff was detected.
+    This function analyzes a flight trajectory to determine if a takeoff has occurred at a specified airport.
+    It uses runway geometries and other flight data to detect takeoff events and identify the runway used 
+    for takeoff. If a takeoff is detected, the function adds relevant information to the trajectory data, 
+    including the lineup time, takeoff runway, and a boolean flag indicating whether a takeoff was detected.
 
-#     Args:
-#         traj (Trajectory): A traffic flight object
-#         rwy_geometries (list of shapely.geometry.Polygon): A list of runway geometries (polygons) representing 
-#                                                            the airport's runways.
-#         df_rwys (pandas.DataFrame): A DataFrame containing runway information for the specified airport, 
-#                                     including runway names and bearings.
-#         airport_str (str): The ICAO code of the airport to check for takeoff. Defaults to 'LSZH'.
-#         gsColName (str, optional): The name of the column in `traj` that contains ground speed data. Defaults to 'compute_gs'.
+    Args:
+        traj (Trajectory): A traffic flight object
+        rwy_geometries (list of shapely.geometry.Polygon): A list of runway geometries (polygons) representing 
+                                                           the airport's runways.
+        df_rwys (pandas.DataFrame): A DataFrame containing runway information for the specified airport, 
+                                    including runway names and bearings.
+        airport_str (str): The ICAO code of the airport to check for takeoff. Defaults to 'LSZH'.
+        gsColName (str, optional): The name of the column in `traj` that contains ground speed data. Defaults to 'compute_gs'.
 
-#     Returns:
-#         Trajectory: The input `Trajectory` object with additional columns:
-#                     - 'lineupTime': The timestamp of the aircraft's lineup on the runway, or NaN if no takeoff was detected.
-#                     - 'takeoffRunway': The name of the detected takeoff runway, or an empty string if no takeoff was detected.
-#                     - 'isTakeoff': A boolean indicating whether a takeoff was detected.
+    Returns:
+        Trajectory: The input `Trajectory` object with additional columns:
+                    - 'lineupTime': The timestamp of the aircraft's lineup on the runway, or NaN if no takeoff was detected.
+                    - 'takeoffRunway': The name of the detected takeoff runway, or an empty string if no takeoff was detected.
+                    - 'isTakeoff': A boolean indicating whether a takeoff was detected.
 
-#     Notes:
-#         - The function assumes that the input `Trajectory` contains data relevant to the specified airport.
-#         - The function checks each runway geometry to see if the trajectory intersects it, suggesting a possible takeoff.
-#         - For a takeoff to be confirmed:
-#           1. The trajectory must intersect with a runway geometry for at least 45 seconds.
-#           2. The distance from the part of the trajectory clipped to the corresponding runway geometry must not exceed 200 meters.
-#           3. The ground speed in the first 5 seconds of the clipped part must be less than 30 knots.
-#           4. The vertical rate in the last 5 seconds of the clipped part must be greater than 500 feet per minute, or the change in 
-#              cumulative distance per second must exceed 0.0277 nautical miles (equivalent to 100 knots).
+    Notes:
+        - The function assumes that the input `Trajectory` contains data relevant to the specified airport.
+        - The function checks each runway geometry to see if the trajectory intersects it, suggesting a possible takeoff.
+        - For a takeoff to be confirmed:
+          1. The trajectory must intersect with a runway geometry for at least 45 seconds.
+          2. The distance from the part of the trajectory clipped to the corresponding runway geometry must not exceed 200 meters.
+          3. The ground speed in the first 5 seconds of the clipped part must be less than 30 knots.
+          4. The vertical rate in the last 5 seconds of the clipped part must be greater than 500 feet per minute, or the change in 
+             cumulative distance per second must exceed 0.0277 nautical miles (equivalent to 100 knots).
 
-#     Example:
-#         >>> traj = takeoff_detection(traj, rwy_geometries, df_rwys, airport_str='LSZH', gsColName='compute_gs')
-#     """
+    Example:
+        >>> traj = takeoff_detection(traj, rwy_geometries, df_rwys, airport_str='LSZH', gsColName='compute_gs')
+    """
      
-#     takeoffRunway = ''
-#     lineupTime = np.nan
-#     isTakeoff = False
+    takeoffRunway = ''
+    lineupTime = np.nan
+    isTakeoff = False
 
-#     if traj.takeoff_from(airport_str):
+    if traj.takeoff_from(airport_str):
 
-#         for i, rwy in enumerate(rwy_geometries):
-#             # Intersection traj with rwy -> modification of flight.intersect() from traffic library
-#             intersection = False
-#             if traj is None or (linestring := traj.linestring) is None:
-#                 intersection = False
-#             if isinstance(rwy, base.BaseGeometry):
-#                 intersection = (not linestring.intersection(rwy).is_empty)
+        for i, rwy in enumerate(rwy_geometries):
+            # Intersection traj with rwy -> modification of flight.intersect() from traffic library
+            intersection = False
+            if traj is None or (linestring := traj.linestring) is None:
+                intersection = False
+            if isinstance(rwy, base.BaseGeometry):
+                intersection = (not linestring.intersection(rwy).is_empty)
 
-#             if intersection:
+            if intersection:
 
-#                 # Clip traj to runway geometry
-#                 clipped_traj = traj.clip(rwy)
+                # Clip traj to runway geometry
+                clipped_traj = traj.clip(rwy)
 
-#                 if (clipped_traj is None) or (clipped_traj.data.empty): #or (clipped_traj.duration < timedelta(seconds=60)):
-#                     continue
+                if (clipped_traj is None) or (clipped_traj.data.empty): #or (clipped_traj.duration < timedelta(seconds=60)):
+                    continue
 
-#                 # Clipped trajs must be in rwy geometry for longer than 45 seconds
-#                 if clipped_traj.duration < timedelta(seconds=45):
-#                     continue
+                # Clipped trajs must be in rwy geometry for longer than 45 seconds
+                if clipped_traj.duration < timedelta(seconds=45):
+                    continue
 
-#                 # Check maximum distance of clipped traj to rwy geometry. If distance it "too" large, this mean that clipped traj moves away from
-#                 # the runway. This can happen, for instance,  with the rwy10/28 geometry with aircraft departing on runway 16 that cross runway 
-#                 # 10/28 before takeoff
-#                 maxDistfromRwy = clipped_traj.distance(rwy).data.distance.max()
-#                 if np.abs(maxDistfromRwy) > 200:
-#                     continue
+                # Check maximum distance of clipped traj to rwy geometry. If distance it "too" large, this mean that clipped traj moves away from
+                # the runway. This can happen, for instance,  with the rwy10/28 geometry with aircraft departing on runway 16 that cross runway 
+                # 10/28 before takeoff
+                maxDistfromRwy = clipped_traj.distance(rwy).data.distance.max()
+                if np.abs(maxDistfromRwy) > 200:
+                    continue
 
-#                 # Cache traj snippets
-#                 first_5sec = clipped_traj.first(seconds=5).data
-#                 last_5sec = clipped_traj.last(seconds=5).data
-#                 last_20sec = clipped_traj.last(seconds=20).data
-#                 #last_60min_data = traj.last(minutes=60)
+                # Cache traj snippets
+                first_5sec = clipped_traj.first(seconds=5).data
+                last_5sec = clipped_traj.last(seconds=5).data
+                last_20sec = clipped_traj.last(seconds=20).data
+                #last_60min_data = traj.last(minutes=60)
 
-#                 # Calculate ground speed and vertical rate
-#                 median_gs = np.nanmedian(first_5sec[gsColName]) if not first_5sec[gsColName].isna().all() else np.nan
-#                 median_rate = np.nanmedian(last_5sec.vertical_rate) if not last_5sec.vertical_rate.isna().all() else np.nan
-#                 median_cumdistDiff = np.nanmedian(last_5sec.cumdist.diff()) if not last_5sec.cumdist.isna().all() else np.nan
+                # Calculate ground speed and vertical rate
+                median_gs = np.nanmedian(first_5sec[gsColName]) if not first_5sec[gsColName].isna().all() else np.nan
+                median_rate = np.nanmedian(last_5sec.vertical_rate) if not last_5sec.vertical_rate.isna().all() else np.nan
+                median_cumdistDiff = np.nanmedian(last_5sec.cumdist.diff()) if not last_5sec.cumdist.isna().all() else np.nan
 
-#                 # It is a take-off if:
-#                 # median_gs in first 5 seconds is less than 30kt, AND
-#                 # (median vertical speed > 500ft/min OR change in cumulative distance per second > 0.0277nm, which is equal to 100kt) in the last 5 seconds
-#                 if (median_gs < 30) and ((median_rate > 500) or median_cumdistDiff > 0.0277) and not last_20sec.empty:
-#                     isTakeoff = True
+                # It is a take-off if:
+                # median_gs in first 5 seconds is less than 30kt, AND
+                # (median vertical speed > 500ft/min OR change in cumulative distance per second > 0.0277nm, which is equal to 100kt) in the last 5 seconds
+                if (median_gs < 30) and ((median_rate > 500) or median_cumdistDiff > 0.0277) and not last_20sec.empty:
+                    isTakeoff = True
 
-#                     # Mean track during take-off
-#                     # median_track = last_20sec.track.median()
-#                     median_track = last_20sec.compute_track.median()
+                    # Mean track during take-off
+                    # median_track = last_20sec.track.median()
+                    median_track = last_20sec.compute_track.median()
 
-#                     # Line-up time
-#                     lineupTime = clipped_traj.start
+                    # Line-up time
+                    lineupTime = clipped_traj.start
 
-#                     # Find the takeoff runway
-#                     runwayBearings = df_rwys.iloc[2*i:2*i+2].bearing
-#                     idx = (runwayBearings - median_track).abs().idxmin()
-#                     takeoffRunway = df_rwys.name.loc[idx]
+                    # Find the takeoff runway
+                    runwayBearings = df_rwys.iloc[2*i:2*i+2].bearing
+                    idx = (runwayBearings - median_track).abs().idxmin()
+                    takeoffRunway = df_rwys.name.loc[idx]
 
-#                     break
+                    break
 
-#     traj.data.loc[:, 'lineupTime'] = lineupTime
-#     traj.data.loc[:, 'takeoffRunway'] = takeoffRunway
-#     traj.data.loc[:, 'isTakeoff'] = isTakeoff
+    traj.data = traj.data.copy()               
+    traj.data.loc[:, 'lineupTime'] = lineupTime
+    traj.data.loc[:, 'takeoffRunway'] = takeoffRunway
+    traj.data.loc[:, 'isTakeoff'] = isTakeoff
 
-#     return traj
+    return traj
 
 
 def alternative_pushback_detection(traj, standAreas, airport_str='LSZH'):
@@ -397,58 +400,72 @@ def alternative_pushback_detection(traj, standAreas, airport_str='LSZH'):
     return traj
 
 
-def normalTaxiFuel(traj):
+# def normalTaxiFuel(traj):
 
-    MESengine = np.nan
-    MESapu = np.nan
-    normTAXIengine = np.nan
+#     MESengine = np.nan
+#     MESapu = np.nan
+#     normTAXIengine = np.nan
 
-    isTakeoff = traj.data.isTakeoff.iloc[0]
-    typecode = traj.data.typecode.iloc[0]
+#     isTakeoff = traj.data.isTakeoff.iloc[0]
+#     typecode = traj.data.typecode.iloc[0]
 
-    if isTakeoff and (typecode in AC2CONSIDER):
+#     if isTakeoff and (typecode in AC2CONSIDER):
 
-        # Fuel for main engine start (MES), for engine and for APU
-        MESengine = fuelMESengine(typecode, startupTime=DEFAULT_STARTUP_TIME, warmupTime=DEFAULT_WARMUP_TIME)
-        MESapu = fuelMESapu(typecode, startupTime=DEFAULT_STARTUP_TIME, warmupTime=DEFAULT_WARMUP_TIME)
+#         # Fuel for main engine start (MES), for engine and for APU
+#         MESengine = fuelMESengine(typecode, startupTime=DEFAULT_STARTUP_TIME, warmupTime=DEFAULT_WARMUP_TIME)
+#         MESapu = fuelMESapu(typecode, startupTime=DEFAULT_STARTUP_TIME, warmupTime=DEFAULT_WARMUP_TIME)
 
-        # Taxi Fuel with engines running
-        startTaxi = traj.data.startTaxi.iloc[0]
-        lineupTime = traj.data.lineupTime.iloc[0]
-        if (startTaxi is not np.nan) and (lineupTime is not np.nan):
-            normTAXIengine = fuelTaxiEngine(typecode, startTaxi, lineupTime)
+#         # Taxi Fuel with engines running
+#         startTaxi = traj.data.startTaxi.iloc[0]
+#         lineupTime = traj.data.lineupTime.iloc[0]
+#         if (startTaxi is not np.nan) and (lineupTime is not np.nan):
+#             normTAXIengine = fuelTaxiEngine(typecode, startTaxi, lineupTime)
 
     
-    # Write data to traj
-    traj.data.loc[:, 'MESengine'] = MESengine
-    traj.data.loc[:, 'MESapu'] = MESapu
-    traj.data.loc[:, 'normTAXIengine'] = normTAXIengine
+#     # Write data to traj
+#     traj.data.loc[:, 'MESengine'] = MESengine
+#     traj.data.loc[:, 'MESapu'] = MESapu
+#     traj.data.loc[:, 'normTAXIengine'] = normTAXIengine
     
 
     return traj
 
+def normalTaxiFuel_df(df_movements, startupTime=DEFAULT_STARTUP_TIME, warmupTime=DEFAULT_WARMUP_TIME):
 
-def extAGPSTaxiFuel(traj, startupTime=DEFAULT_STARTUP_TIME, warmupTime=DEFAULT_WARMUP_TIME):
-    ECSapu = np.nan
-    extAGPStug = np.nan
+    df_movements = fuelMESengine_df(df_movements, startupTime, warmupTime)
+    df_movements = fuelMESapu_df(df_movements)
+    df_movements = fuelTaxiEngine_df(df_movements)
 
-    isTakeoff = traj.data.isTakeoff.iloc[0]
-    typecode = traj.data.typecode.iloc[0]
+    return df_movements
 
-    if isTakeoff and (typecode in AC2CONSIDER):
-        startTaxi = traj.data.startTaxi.iloc[0]
-        lineupTime = traj.data.lineupTime.iloc[0]
-        taxiDuration = lineupTime - startTaxi
 
-        # Calculate fuel required for ECS of APU during external AGPS operaitons
-        if taxiDuration > timedelta(seconds=0):
-            ECSapu = fuelECSapu(typecode, agpsDuration=taxiDuration)
+# def extAGPSTaxiFuel(traj, startupTime=DEFAULT_STARTUP_TIME, warmupTime=DEFAULT_WARMUP_TIME):
+#     ECSapu = np.nan
+#     extAGPStug = np.nan
 
-    traj.data.loc[:, 'extAGPSapu'] = ECSapu
-    traj.data.loc[:, 'extAGPStug'] = extAGPStug
+#     isTakeoff = traj.data.isTakeoff.iloc[0]
+#     typecode = traj.data.typecode.iloc[0]
 
-    return traj
+#     if isTakeoff and (typecode in AC2CONSIDER):
+#         startTaxi = traj.data.startTaxi.iloc[0]
+#         lineupTime = traj.data.lineupTime.iloc[0]
+#         taxiDuration = lineupTime - startTaxi
 
+#         # Calculate fuel required for ECS of APU during external AGPS operaitons
+#         if taxiDuration > timedelta(seconds=0):
+#             ECSapu = fuelECSapu(typecode, agpsDuration=taxiDuration)
+
+#     traj.data.loc[:, 'extAGPSapu'] = ECSapu
+#     traj.data.loc[:, 'extAGPStug'] = extAGPStug
+
+#     return traj
+
+
+def extAGPSTaxiFuel_df(df_movements):
+    df_movements['extAGPSapu'] = df_movements['APUnormalFF'] / 3600 * df_movements['taxiDuration'].dt.total_seconds()
+    df_movements['extAGPStug'] = np.nan
+
+    return df_movements
 
 
 
@@ -504,25 +521,32 @@ def getIdleFF(typecode: str) -> float:
 
     return ff_idle
 
+def getIdleFF_df(df_movements):
+
+    unique_typecodes = df_movements.typecode.unique()
+    typecode_to_idleFF = {typecode: getIdleFF(typecode) for typecode in unique_typecodes}
+    df_movements['engIdleFF'] = df_movements['typecode'].map(typecode_to_idleFF)
+
+    return df_movements
 
 
-def dfAPUfuel() -> pd.DataFrame:
-    """
-    Creates and returns a DataFrame containing APU (Auxiliary Power Unit) fuel consumption data.
+# def dfAPUfuel() -> pd.DataFrame:
+#     """
+#     Creates and returns a DataFrame containing APU (Auxiliary Power Unit) fuel consumption data.
 
-    The DataFrame includes details of APU fuel consumption for different aircraft types and operating modes.
-    The data is based on ICAO Document 9889 Table 3-A1-5, which provides an advanced approach to calculate
-    fuel consumption.
+#     The DataFrame includes details of APU fuel consumption for different aircraft types and operating modes.
+#     The data is based on ICAO Document 9889 Table 3-A1-5, which provides an advanced approach to calculate
+#     fuel consumption.
 
-    Returns:
-        pd.DataFrame: A DataFrame with columns representing various aircraft types and rows for different
-                      APU operating modes, detailing the fuel consumption rates.
-    """
+#     Returns:
+#         pd.DataFrame: A DataFrame with columns representing various aircraft types and rows for different
+#                       APU operating modes, detailing the fuel consumption rates.
+#     """
 
-    return DF_APU
+#     return DF_APU
 
 
-def getAPUfuel(typecode: str, df_apu = DF_APU) -> pd.Series:
+def getAPUfuelFlow(typecode: str, df_apu = DF_APU, column='') -> pd.Series:
     """
     Retrieves the APU (Auxiliary Power Unit) fuel consumption rates in kilograms per hour for a specified aircraft type.
 
@@ -578,8 +602,28 @@ def getAPUfuel(typecode: str, df_apu = DF_APU) -> pd.Series:
     else:
         idx = 4 if is_old else 5
 
+
+    if column == 'high':
+        apu_FF = df_apu.iloc[idx]['high']
+    elif column == 'normal':
+        apu_FF = df_apu.iloc[idx]['normal']
+    elif column == 'startup':
+        apu_FF = df_apu.iloc[idx]['startup']
+    else:
+        apu_FF = df_apu.iloc[idx]
+
     # Return the selected row as a Series from the DataFrame
-    return df_apu.iloc[idx]
+    return apu_FF
+
+def getAPUfuelFlow_df(df_movements: pd.DataFrame) -> pd.DataFrame:
+
+    unique_typecodes = df_movements.typecode.unique()
+    typecode_to_APUhigh = {typecode: getAPUfuelFlow(typecode, DF_APU, 'high') for typecode in unique_typecodes}
+    typecode_to_APUnormal = {typecode: getAPUfuelFlow(typecode, DF_APU, 'normal') for typecode in unique_typecodes}
+    df_movements['APUhighFF'] = df_movements['typecode'].map(typecode_to_APUhigh)
+    df_movements['APUnormalFF'] = df_movements['typecode'].map(typecode_to_APUnormal)
+
+    return df_movements
 
 
 def getNengine(typecode: str) -> int:
@@ -624,6 +668,15 @@ def getNengine(typecode: str) -> int:
     return nEngines
 
 
+def getNengine_df(df_movements: pd.DataFrame) -> pd.DataFrame:
+
+    unique_typecodes = df_movements.typecode.unique()
+    typecode_to_nEngine = {typecode: getNengine(typecode) for typecode in unique_typecodes}
+    df_movements['nEngines'] = df_movements['typecode'].map(typecode_to_nEngine)
+
+    return df_movements
+
+
 def getMESduration(typecode: str, 
                    startupTime=DEFAULT_STARTUP_TIME, 
                    warmupTime=DEFAULT_WARMUP_TIME) -> datetime.timedelta:
@@ -659,217 +712,263 @@ def getMESduration(typecode: str,
 
 
 
-def fuelMESengine(typecode: str, 
-                  startupTime=DEFAULT_STARTUP_TIME, 
-                  warmupTime=DEFAULT_WARMUP_TIME) -> float:
+# def fuelMESengine(typecode: str, 
+#                   startupTime=DEFAULT_STARTUP_TIME, 
+#                   warmupTime=DEFAULT_WARMUP_TIME) -> float:
     
-    """
-    Calculates the total fuel consumption for main engine start (MES) based on the aircraft type and the number of engines.
+#     """
+#     Calculates the total fuel consumption for main engine start (MES) based on the aircraft type and the number of engines.
 
-    This function estimates the fuel consumption required to start all engines sequentially (i.e. one after another) for 
-    a given aircraft type, considering both the run-up time needed to start each engine and an additional warm-up period 
-    after the last engine starts. After an engine has started up, idle thrust conditions are assumed.
+#     This function estimates the fuel consumption required to start all engines sequentially (i.e. one after another) for 
+#     a given aircraft type, considering both the run-up time needed to start each engine and an additional warm-up period 
+#     after the last engine starts. After an engine has started up, idle thrust conditions are assumed.
 
-    Assumptions:
-        * Engines are started sequentially, one after another.
-        * Each engine start takes `startupTime` seconds.
-        * There is no slack or delay between the start of successive engines.
-        * After the start of the last engine, it warms up for `warmupTime` seconds.
+#     Assumptions:
+#         * Engines are started sequentially, one after another.
+#         * Each engine start takes `startupTime` seconds.
+#         * There is no slack or delay between the start of successive engines.
+#         * After the start of the last engine, it warms up for `warmupTime` seconds.
 
-    Args:
-        typecode (str): The ICAO typecode of the aircraft.
-        startupTime (int, optional): The time in seconds required to start each engine. Defaults to `DEFAULT_STARTUP_TIME`.
-        warmupTime (int, optional): The warm-up time in seconds after all engines have started. Defaults to `DEFAULT_WARMUP_TIME`.
+#     Args:
+#         typecode (str): The ICAO typecode of the aircraft.
+#         startupTime (int, optional): The time in seconds required to start each engine. Defaults to `DEFAULT_STARTUP_TIME`.
+#         warmupTime (int, optional): The warm-up time in seconds after all engines have started. Defaults to `DEFAULT_WARMUP_TIME`.
 
-    Returns:
-        float: The total fuel consumption for main engine start in kilograms.
+#     Returns:
+#         float: The total fuel consumption for main engine start in kilograms.
 
-    Notes:
-        - The function first retrieves the number of engines and the idle fuel flow rate (idleFF) for the specified aircraft type
-          using the `getNengine` and `getIdleFF` functions.
-        - Fuel consumption is calculated based on the sum of fuel used for each engine start and warm-up period.
-        - The `typecode` is converted to uppercase to ensure consistency in lookups.
+#     Notes:
+#         - The function first retrieves the number of engines and the idle fuel flow rate (idleFF) for the specified aircraft type
+#           using the `getNengine` and `getIdleFF` functions.
+#         - Fuel consumption is calculated based on the sum of fuel used for each engine start and warm-up period.
+#         - The `typecode` is converted to uppercase to ensure consistency in lookups.
 
-    Example:
-        >>> fuel_consumption = fuelMESengine('A320')
-        >>> print(fuel_consumption)
-        120.0  # Example output, actual value depends on data and typecode
-    """
+#     Example:
+#         >>> fuel_consumption = fuelMESengine('A320')
+#         >>> print(fuel_consumption)
+#         120.0  # Example output, actual value depends on data and typecode
+#     """
 
-    typecode = typecode.upper()
+#     typecode = typecode.upper()
 
-    # Get number of engines and idle fuel flow for the aircraft type
-    nEngine = getNengine(typecode)
-    idleFF = getIdleFF(typecode)
+#     # Get number of engines and idle fuel flow for the aircraft type
+#     nEngine = getNengine(typecode)
+#     idleFF = getIdleFF(typecode)
 
-    # Initialize total fuel consumption
-    fuelConsumption = 0
+#     # Initialize total fuel consumption
+#     fuelConsumption = 0
 
-    # Loop to calculate fuel consumption for each engine
-    for i in range(1, nEngine + 1):
-        fuelConsumption += idleFF * (i * startupTime + warmupTime)
+#     # Loop to calculate fuel consumption for each engine
+#     for i in range(1, nEngine + 1):
+#         fuelConsumption += idleFF * (i * startupTime + warmupTime)
 
     return fuelConsumption
 
+def fuelMESengine_df(df_movements: pd.DataFrame, 
+                     startupTime=DEFAULT_STARTUP_TIME, 
+                     warmupTime=DEFAULT_WARMUP_TIME) -> pd.DataFrame:
 
-def fuelMESapu(typecode: str, 
-               df_apu=DF_APU, 
-               startupTime=DEFAULT_STARTUP_TIME, 
-               warmupTime=DEFAULT_WARMUP_TIME) -> float:
+    # Create an array representing the engine numbers from 1 up to the maximum nEngine value
+    engine_numbers = np.arange(1, df_movements['nEngines'].max() + 1)
+
+    # Reshape 'engIdleFF' and 'nEngines' to match the broadcasting requirements
+    idle_ff_values = df_movements['engIdleFF'].values[:, np.newaxis]
+    n_engine_values = df_movements['nEngines'].values[:, np.newaxis]
+
+    # Calculate the fuel consumption for each engine and sum across all engines up to 'nEngines' for each row
+    fuel_per_engine = idle_ff_values * (engine_numbers * startupTime + warmupTime)
+
+    # Mask out engines that exceed 'nEngines' for each row
+    fuel_per_engine = np.where(engine_numbers <= n_engine_values, fuel_per_engine, 0)
+
+    # Sum the fuel consumption for all engines for each row
+    df_movements['MESengine'] = fuel_per_engine.sum(axis=1)
+
+    return df_movements
+
+
+# def fuelMESapu(typecode: str, 
+#                df_apu=DF_APU, 
+#                startupTime=DEFAULT_STARTUP_TIME, 
+#                warmupTime=DEFAULT_WARMUP_TIME) -> float:
     
-    """
-    Calculates the fuel consumption of the Auxiliary Power Unit (APU) in kilograms (kg) for the main engine start 
-    sequence based on the aircraft type.
+#     """
+#     Calculates the fuel consumption of the Auxiliary Power Unit (APU) in kilograms (kg) for the main engine start 
+#     sequence based on the aircraft type.
 
-    This function estimates the total APU fuel consumption required during the sequential startup of the aircraft's 
-    engines (i.e. engines are started up one after another). It uses the type of aircraft to determine the number of 
-    engines and their respective fuel consumption rates. The calculation accounts for both the run-up and warm-up 
-    times specified for the startup process, adjusting fuel consumption rates from hours to seconds as necessary.
+#     This function estimates the total APU fuel consumption required during the sequential startup of the aircraft's 
+#     engines (i.e. engines are started up one after another). It uses the type of aircraft to determine the number of 
+#     engines and their respective fuel consumption rates. The calculation accounts for both the run-up and warm-up 
+#     times specified for the startup process, adjusting fuel consumption rates from hours to seconds as necessary.
 
-    Args:
-        typecode (str): The ICAO typecode of the aircraft for which the APU fuel consumption is calculated.
-        df_apu (pd.DataFrame): A DataFrame containing APU fuel consumption data for various aircraft types.
-                               Defaults to `DF_APU`.
-        startupTime (int, optional): The time in seconds for which each engine runs up during the startup. 
-                                     Defaults to `DEFAULT_STARTUP_TIME`.
-        warmupTime (int, optional): The time in seconds for which the last engine warms up after all engines are started.
-                                    Defaults to `DEFAULT_WARMUP_TIME`.
+#     Args:
+#         typecode (str): The ICAO typecode of the aircraft for which the APU fuel consumption is calculated.
+#         df_apu (pd.DataFrame): A DataFrame containing APU fuel consumption data for various aircraft types.
+#                                Defaults to `DF_APU`.
+#         startupTime (int, optional): The time in seconds for which each engine runs up during the startup. 
+#                                      Defaults to `DEFAULT_STARTUP_TIME`.
+#         warmupTime (int, optional): The time in seconds for which the last engine warms up after all engines are started.
+#                                     Defaults to `DEFAULT_WARMUP_TIME`.
 
-    Returns:
-        float: The total APU fuel consumption in kilograms (kg) for the main engine start sequence.
+#     Returns:
+#         float: The total APU fuel consumption in kilograms (kg) for the main engine start sequence.
 
-    Assumptions:
-        * Engines are started sequentially.
-        * Each engine start takes `startupTime` seconds.
-        * There is no slack time between engine starts; engines start one immediately after the other.
-        * After the start of the last engine, this engine warms up for `warmupTime` seconds.
-        * APU fuel consumption rates (high and normal) are provided in kg/h and are converted to per-second rates 
-          within the function.
+#     Assumptions:
+#         * Engines are started sequentially.
+#         * Each engine start takes `startupTime` seconds.
+#         * There is no slack time between engine starts; engines start one immediately after the other.
+#         * After the start of the last engine, this engine warms up for `warmupTime` seconds.
+#         * APU fuel consumption rates (high and normal) are provided in kg/h and are converted to per-second rates 
+#           within the function.
 
-    Example:
-        >>> df_apu = getAPUfuel_df()
-        >>> fuel_consumed = fuelMESapu('A320', df_apu, startupTime=150, warmupTime=180)
-        >>> print(fuel_consumed)
-        2.75  # Example output, actual value may differ based on data
+#     Example:
+#         >>> df_apu = getAPUfuel_df()
+#         >>> fuel_consumed = fuelMESapu('A320', df_apu, startupTime=150, warmupTime=180)
+#         >>> print(fuel_consumed)
+#         2.75  # Example output, actual value may differ based on data
 
-    Notes:
-        - Ensure that the DataFrame `df_apu` is correctly formatted and contains the necessary APU fuel consumption 
-          rates for the specified `typecode`.
-        - The function converts the `typecode` to uppercase to ensure consistency in lookups.
-        - The function calculates fuel consumption by determining the fuel used during the startup time for each engine 
-          and the warm-up period after all engines are started.
+#     Notes:
+#         - Ensure that the DataFrame `df_apu` is correctly formatted and contains the necessary APU fuel consumption 
+#           rates for the specified `typecode`.
+#         - The function converts the `typecode` to uppercase to ensure consistency in lookups.
+#         - The function calculates fuel consumption by determining the fuel used during the startup time for each engine 
+#           and the warm-up period after all engines are started.
 
-    """
-
-
-    typecode = typecode.upper()
-
-    apuFuel = getAPUfuel(typecode, df_apu)
-    nEngine = getNengine(typecode)
-
-    fuelConsumption = (nEngine * apuFuel['high'] / 3600 * startupTime) + (apuFuel['normal'] / 3600 * warmupTime)
-
-    return fuelConsumption
+#     """
 
 
-def fuelTaxiEngine(typecode: str, 
-                   startTaxi: datetime, 
-                   lineupTime: datetime, 
-                   singleEngine = False):
+#     typecode = typecode.upper()
+
+#     apuFuel = getAPUfuel(typecode, df_apu)
+#     nEngine = getNengine(typecode)
+
+#     fuelConsumption = (nEngine * apuFuel['high'] / 3600 * startupTime) + (apuFuel['normal'] / 3600 * warmupTime)
+
+#     return fuelConsumption
+
+
+
+def fuelMESapu_df(df_movements: pd.DataFrame,
+                  startupTime=DEFAULT_STARTUP_TIME,
+                  warmupTime=DEFAULT_WARMUP_TIME) -> pd.DataFrame:
+
+    df_movements['MESapu'] = (df_movements['nEngines'] * df_movements['APUhighFF'] / 3600 * startupTime) + (df_movements['APUnormalFF'] / 3600 * warmupTime)
+
+    return df_movements
+
+
+# def fuelTaxiEngine(typecode: str, 
+#                    startTaxi: datetime, 
+#                    lineupTime: datetime, 
+#                    singleEngine = False):
     
-    """
-    Calculates the fuel consumption of the engine(s) during the taxi phase for a specified aircraft type.
+#     """
+#     Calculates the fuel consumption of the engine(s) during the taxi phase for a specified aircraft type.
 
-    This function estimates the total fuel consumption of the aircraft's engines during taxiing from the start time 
-    (`startTaxi`) to the lineup time on a runway (`lineupTime`). The calculation is based on the aircraft type, the 
-    number of engines, the idle fuel flow rate, and whether a single-engine taxi procedure is used.
+#     This function estimates the total fuel consumption of the aircraft's engines during taxiing from the start time 
+#     (`startTaxi`) to the lineup time on a runway (`lineupTime`). The calculation is based on the aircraft type, the 
+#     number of engines, the idle fuel flow rate, and whether a single-engine taxi procedure is used.
 
-    Args:
-        typecode (str): The ICAO typecode of the aircraft.
-        startTaxi (datetime): The timestamp when the taxi phase starts.
-        lineupTime (datetime): The timestamp when the taxi phase ends (when the aircraft is lined up for takeoff).
-        singleEngine (bool, optional): If True, assumes only 50% of the engines are running during taxi (e.g., 
-                                       single-engine taxi for a two-engine aircraft). Defaults to False.
+#     Args:
+#         typecode (str): The ICAO typecode of the aircraft.
+#         startTaxi (datetime): The timestamp when the taxi phase starts.
+#         lineupTime (datetime): The timestamp when the taxi phase ends (when the aircraft is lined up for takeoff).
+#         singleEngine (bool, optional): If True, assumes only 50% of the engines are running during taxi (e.g., 
+#                                        single-engine taxi for a two-engine aircraft). Defaults to False.
 
-    Returns:
-        float: The total fuel consumption in kilograms (kg) for the taxi phase.
+#     Returns:
+#         float: The total fuel consumption in kilograms (kg) for the taxi phase.
 
-    Notes:
-        - The function retrieves the idle fuel flow rate (`idleFF`) and the number of engines (`nEngine`) for the 
-          specified aircraft type using the `getIdleFF` and `getNengine` functions.
-        - The fuel consumption is calculated by multiplying the taxi duration (in seconds) by the number of engines 
-          and the idle fuel flow rate.
-        - If `singleEngine` is True, the fuel consumption is halved, assuming only half of the engines are operating.
-        - The `typecode` is converted to uppercase to ensure consistency in lookups.
+#     Notes:
+#         - The function retrieves the idle fuel flow rate (`idleFF`) and the number of engines (`nEngine`) for the 
+#           specified aircraft type using the `getIdleFF` and `getNengine` functions.
+#         - The fuel consumption is calculated by multiplying the taxi duration (in seconds) by the number of engines 
+#           and the idle fuel flow rate.
+#         - If `singleEngine` is True, the fuel consumption is halved, assuming only half of the engines are operating.
+#         - The `typecode` is converted to uppercase to ensure consistency in lookups.
 
-    Example:
-        >>> from datetime import datetime
-        >>> fuel_consumption = fuelTaxiEngine('A320', datetime(2024, 6, 1, 12, 0, 0), datetime(2024, 6, 1, 12, 10, 0))
-        >>> print(fuel_consumption)
-        45.0  # Example output, actual value depends on data and typecode
+#     Example:
+#         >>> from datetime import datetime
+#         >>> fuel_consumption = fuelTaxiEngine('A320', datetime(2024, 6, 1, 12, 0, 0), datetime(2024, 6, 1, 12, 10, 0))
+#         >>> print(fuel_consumption)
+#         45.0  # Example output, actual value depends on data and typecode
 
-    """
+#     """
 
 
-    typecode = typecode.upper()
+#     typecode = typecode.upper()
 
-    idleFF = getIdleFF(typecode)
-    nEngine = getNengine(typecode)
+#     idleFF = getIdleFF(typecode)
+#     nEngine = getNengine(typecode)
 
-    taxiDuration = lineupTime - startTaxi
-    taxiDuration = taxiDuration.total_seconds()
+#     taxiDuration = lineupTime - startTaxi
+#     taxiDuration = taxiDuration.total_seconds()
 
     
-    fuelConsumption = taxiDuration * nEngine * idleFF
+#     fuelConsumption = taxiDuration * nEngine * idleFF
 
-    if singleEngine:
+#     if singleEngine:
+#         fuelConsumption = fuelConsumption * 0.5
+
+#     return fuelConsumption
+
+def fuelTaxiEngine_df(df_movements: pd.DataFrame, singleEngineTaxi=False) -> pd.DataFrame:
+
+    fuelConsumption = (df_movements['taxiDuration'].dt.total_seconds() 
+                       * df_movements['nEngines'] 
+                       * df_movements['engIdleFF']
+    )
+
+    if singleEngineTaxi:
         fuelConsumption = fuelConsumption * 0.5
 
-    return fuelConsumption
+    df_movements['normTAXIengine'] = fuelConsumption
+
+    return df_movements 
 
 
-def fuelECSapu(typecode: str, 
-               agpsDuration: datetime.timedelta,
-               df_apu = DF_APU) -> float:
-    """ 
-    Calculates the fuel consumption of the Auxiliary Power Unit (APU) in kilograms (kg) for powering the Environmental 
-    Control System (ECS) of the aircraft.
+# def fuelECSapu(typecode: str, 
+#                agpsDuration: datetime.timedelta,
+#                df_apu = DF_APU) -> float:
+#     """ 
+#     Calculates the fuel consumption of the Auxiliary Power Unit (APU) in kilograms (kg) for powering the Environmental 
+#     Control System (ECS) of the aircraft.
 
-    This function estimates the total APU fuel consumption required when the APU is used to energize the ECS during 
-    a specified duration. The fuel consumption is based on the normal fuel consumption rate of the APU for the given 
-    aircraft type and the duration for which the ECS is powered.
+#     This function estimates the total APU fuel consumption required when the APU is used to energize the ECS during 
+#     a specified duration. The fuel consumption is based on the normal fuel consumption rate of the APU for the given 
+#     aircraft type and the duration for which the ECS is powered.
 
-    Args:
-        typecode (str): The ICAO typecode of the aircraft.
-        agpsDuration (datetime.timedelta): The duration for which the APU powers the ECS.
-        df_apu (pd.DataFrame, optional): A DataFrame containing APU fuel consumption data for various aircraft types.
-                                         Defaults to `DF_APU`.
+#     Args:
+#         typecode (str): The ICAO typecode of the aircraft.
+#         agpsDuration (datetime.timedelta): The duration for which the APU powers the ECS.
+#         df_apu (pd.DataFrame, optional): A DataFrame containing APU fuel consumption data for various aircraft types.
+#                                          Defaults to `DF_APU`.
 
-    Returns:
-        float: The total APU fuel consumption in kilograms (kg) for powering the ECS.
+#     Returns:
+#         float: The total APU fuel consumption in kilograms (kg) for powering the ECS.
 
-    Notes:
-        - The function retrieves APU fuel consumption rates using the `getAPUfuel` function, which looks up data 
-          based on the aircraft typecode.
-        - The normal APU fuel consumption rate is provided in kilograms per hour (kg/h) and is converted to a 
-          per-second rate within the function for accurate calculations.
-        - The `typecode` is converted to uppercase to ensure consistency in lookups.
+#     Notes:
+#         - The function retrieves APU fuel consumption rates using the `getAPUfuel` function, which looks up data 
+#           based on the aircraft typecode.
+#         - The normal APU fuel consumption rate is provided in kilograms per hour (kg/h) and is converted to a 
+#           per-second rate within the function for accurate calculations.
+#         - The `typecode` is converted to uppercase to ensure consistency in lookups.
 
-    Example:
-        >>> from datetime import timedelta
-        >>> fuel_consumed = fuelECSapu('A320', timedelta(hours=1))
-        >>> print(fuel_consumed)
-        5.0  # Example output, actual value may differ based on data
+#     Example:
+#         >>> from datetime import timedelta
+#         >>> fuel_consumed = fuelECSapu('A320', timedelta(hours=1))
+#         >>> print(fuel_consumed)
+#         5.0  # Example output, actual value may differ based on data
 
-    """
+#     """
 
-    typecode = typecode.upper()
+#     typecode = typecode.upper()
 
-    apuFuel = getAPUfuel(typecode, df_apu)
+#     apuFuel = getAPUfuel(typecode, df_apu)
 
-    fuelConsumption = apuFuel['normal'] / 3600 * agpsDuration.total_seconds()
+#     fuelConsumption = apuFuel['normal'] / 3600 * agpsDuration.total_seconds()
 
-    return fuelConsumption
+#     return fuelConsumption
 
 
 
