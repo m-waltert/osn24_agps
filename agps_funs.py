@@ -430,11 +430,15 @@ def alternative_pushback_detection(traj, standAreas, airport_str='LSZH'):
 
     return traj
 
-def normalTaxiFuel_df(df_movements, startupTime=DEFAULT_STARTUP_TIME, warmupTime=DEFAULT_WARMUP_TIME):
+def normalTaxiFuel_df(df_movements: pd.DataFrame, 
+                      startupTime=DEFAULT_STARTUP_TIME, 
+                      warmupTime=DEFAULT_WARMUP_TIME, 
+                      colNames=['MESengine', 'MESapu', 'normTAXIengine']
+                      ) -> pd.DataFrame:
 
-    df_movements = fuelMESengine_df(df_movements, startupTime, warmupTime)
-    df_movements = fuelMESapu_df(df_movements)
-    df_movements = fuelTaxiEngine_df(df_movements)
+    df_movements = fuelMESengine_df(df_movements, startupTime, warmupTime, colName=colNames[0])
+    df_movements = fuelMESapu_df(df_movements, startupTime, warmupTime, colName=colNames[1])
+    df_movements = fuelTaxiEngine_df(df_movements, colName=colNames[2])
 
     return df_movements
 
@@ -461,9 +465,9 @@ def normalTaxiFuel_df(df_movements, startupTime=DEFAULT_STARTUP_TIME, warmupTime
 #     return traj
 
 
-def extAGPSTaxiFuel_df(df_movements):
-    df_movements['extAGPSapu'] = df_movements['APUnormalFF'] / 3600 * df_movements['taxiDuration'].dt.total_seconds()
-    df_movements['extAGPStug'] = np.nan
+def extAGPSTaxiFuel_df(df_movements, colNames=['extAGPSapu', 'extAGPStug']):
+    df_movements[colNames[0]] = df_movements['APUnormalFF'] / 3600 * df_movements['taxiDuration'].dt.total_seconds()
+    df_movements[colNames[1]] = np.nan
 
     return df_movements
 
@@ -766,7 +770,8 @@ def getMESduration(typecode: str,
 
 def fuelMESengine_df(df_movements: pd.DataFrame, 
                      startupTime=DEFAULT_STARTUP_TIME, 
-                     warmupTime=DEFAULT_WARMUP_TIME) -> pd.DataFrame:
+                     warmupTime=DEFAULT_WARMUP_TIME,
+                     colName='MESengine') -> pd.DataFrame:
 
     # Create an array representing the engine numbers from 1 up to the maximum nEngine value
     engine_numbers = np.arange(1, df_movements['nEngines'].max() + 1)
@@ -782,7 +787,7 @@ def fuelMESengine_df(df_movements: pd.DataFrame,
     fuel_per_engine = np.where(engine_numbers <= n_engine_values, fuel_per_engine, 0)
 
     # Sum the fuel consumption for all engines for each row
-    df_movements['MESengine'] = fuel_per_engine.sum(axis=1)
+    df_movements[colName] = fuel_per_engine.sum(axis=1)
 
     return df_movements
 
@@ -850,9 +855,10 @@ def fuelMESengine_df(df_movements: pd.DataFrame,
 
 def fuelMESapu_df(df_movements: pd.DataFrame,
                   startupTime=DEFAULT_STARTUP_TIME,
-                  warmupTime=DEFAULT_WARMUP_TIME) -> pd.DataFrame:
+                  warmupTime=DEFAULT_WARMUP_TIME,
+                  colName='MESapu') -> pd.DataFrame:
 
-    df_movements['MESapu'] = (df_movements['nEngines'] * df_movements['APUhighFF'] / 3600 * startupTime) + (df_movements['APUnormalFF'] / 3600 * warmupTime)
+    df_movements[colName] = (df_movements['nEngines'] * df_movements['APUhighFF'] / 3600 * startupTime) + (df_movements['APUnormalFF'] / 3600 * warmupTime)
 
     return df_movements
 
@@ -912,17 +918,18 @@ def fuelMESapu_df(df_movements: pd.DataFrame,
 
 #     return fuelConsumption
 
-def fuelTaxiEngine_df(df_movements: pd.DataFrame, singleEngineTaxi=False) -> pd.DataFrame:
+def fuelTaxiEngine_df(df_movements: pd.DataFrame, 
+                      singleEngineTaxi=False,
+                      colName='normTAXIengine') -> pd.DataFrame:
 
     fuelConsumption = (df_movements['taxiDuration'].dt.total_seconds() 
                        * df_movements['nEngines'] 
-                       * df_movements['engIdleFF']
-    )
+                       * df_movements['engIdleFF'])
 
     if singleEngineTaxi:
         fuelConsumption = fuelConsumption * 0.5
 
-    df_movements['normTAXIengine'] = fuelConsumption
+    df_movements[colName] = fuelConsumption
 
     return df_movements 
 
