@@ -119,8 +119,6 @@ DEFAULT_STARTUP_TIME = 60                # Duration of start-up of an engine [se
 DEFAULT_WARMUP_TIME = 120                # Duration of warm-up period required after start-up of last engine [seconds]
 
 #%% 
-
-
 # APU Fuel Flow Data, based on ICAO Doc 9889 Airport Air Quality Manual, Table 3-A1-6. APU fuel group 
 data = {
     'APU fuel group': [
@@ -138,19 +136,12 @@ data = {
 
 DF_APU = pd.DataFrame(data)
 
-
+#%% 
 def get_Stands_LSZH():
 
     stands = []
 
-    # # Dock E Stands
-    # stands.append(Polygon(shell=((8.559361, 47.461887),
-    #                              (8.549978, 47.462542),
-    #                              (8.551437, 47.460347),
-    #                              (8.559075, 47.459822))))
-
-
-    # Dock E Stands (area slightly extended in order to improve pushback detection)
+    # Dock E Stands
     stands.append(Polygon(shell=((8.549924, 47.462661),
                                 (8.551635, 47.460186),
                                 (8.559250, 47.459671),
@@ -162,13 +153,7 @@ def get_Stands_LSZH():
                                 (8.560965, 47.452810),
                                 (8.562083, 47.454330))))
 
-    # # Dock B Stands
-    # stands.append(Polygon(shell=((8.560488, 47.451963),
-    #                              (8.556346, 47.452250),
-    #                              (8.557920, 47.450010),
-    #                              (8.560157, 47.449799))))
-
-    # Dock B Stands (area slightly extended in order to improve pushback detection)
+    # Dock B Stands
     stands.append(Polygon(shell=((8.556163, 47.452404),
                                 (8.558079, 47.449825),
                                 (8.559995, 47.449686),
@@ -210,11 +195,10 @@ def get_Stands_LSZH():
                                 (8.547307, 47.452003),
                                 (8.548511, 47.452336))))
 
-
     return stands
 
-
-# icao24 missing in Opensky Database
+#%% 
+# icao24 hex code often observed at LSZH Airport, but currently missing in Opensky Database
 data = [
         ('48ac80', 'E295', 'L2J'),
         ('502d7a', 'BCS3', 'L2J'),
