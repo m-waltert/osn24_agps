@@ -1,6 +1,14 @@
-from agps_config import AIRCRAFT_INFO, DEFAULT_STARTUP_TIME, DEFAULT_WARMUP_TIME, DF_APU, OLD_AIRCRAFT, AC2CONSIDER, DF_MISSING_ICAO24
+from agps_config import (
+    AIRCRAFT_INFO,
+    DEFAULT_STARTUP_TIME,
+    DEFAULT_WARMUP_TIME,
+    DF_APU,
+    OLD_AIRCRAFT,
+    AC2CONSIDER,
+    DF_MISSING_ICAO24,
+)
 import traffic
-from traffic.core import Traffic
+from traffic.core import Traffic, Flight
 from traffic.data import airports
 import numpy as np
 from datetime import timedelta
@@ -14,6 +22,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 from cartes.crs import EuroPP
 import cartopy.crs as ccrs
+
 data_proj = ccrs.PlateCarree()
 
 
@@ -21,30 +30,29 @@ def get_lon_lat_by_runway(df_runways, runway_name):
     """
     Retrieves the longitude and latitude coordinates for a specified runway.
 
-    This function searches a DataFrame containing runway information for a row 
-    matching the provided `runway_name`. If found, it extracts and returns the 
+    This function searches a DataFrame containing runway information for a row
+    matching the provided `runway_name`. If found, it extracts and returns the
     longitude and latitude of that runway; otherwise, it returns `None` values.
     """
 
-    row = df_runways[df_runways['name'] == runway_name]
+    row = df_runways[df_runways["name"] == runway_name]
     if not row.empty:
-        lat = row.iloc[0]['latitude']
-        lon = row.iloc[0]['longitude']
+        lat = row.iloc[0]["latitude"]
+        lon = row.iloc[0]["longitude"]
         return lon, lat
     else:
         return None, None
-    
 
-# Function to extend a point in the direction of another point
+
 def extend_point(p1, p2, distance):
     """
     Extends a point `p1` away from a second point `p2` by a specified distance.
 
-    This function calculates the direction vector from `p1` to `p2`, normalizes it, 
-    and then extends `p1` in the opposite direction of `p2` by the given `distance`. 
+    This function calculates the direction vector from `p1` to `p2`, normalizes it,
+    and then extends `p1` in the opposite direction of `p2` by the given `distance`.
     This is useful for creating extended points along or opposite to a line segment.
     """
-    
+
     # Calculate direction vector
     direction = np.array(p2) - np.array(p1)
     direction = direction / np.linalg.norm(direction)  # Normalize the vector
@@ -57,42 +65,42 @@ def find_opposite_runway(runway: str) -> str:
     """
     Determines the opposite runway identifier based on a given runway number and position.
 
-    The opposite runway is typically located 180 degrees from the original runway, 
-    with an identifier that is 18 units different from the original. The function 
-    also handles the left ('L'), right ('R'), and center ('C') suffixes to ensure the 
+    The opposite runway is typically located 180 degrees from the original runway,
+    with an identifier that is 18 units different from the original. The function
+    also handles the left ('L'), right ('R'), and center ('C') suffixes to ensure the
     correct opposite is returned.
 
     Parameters:
     -----------
     runway : str
-        The original runway identifier, which may include a suffix ('L', 'R', or 'C') 
+        The original runway identifier, which may include a suffix ('L', 'R', or 'C')
         to indicate position (e.g., '09L', '27R').
 
     Returns:
     --------
     str
-        The opposite runway identifier, adjusted by 180 degrees and including the 
+        The opposite runway identifier, adjusted by 180 degrees and including the
         appropriate suffix if applicable.
 
     Notes:
     ------
-    - Runway numbers are represented in a range of 01 to 36. If the computed opposite 
+    - Runway numbers are represented in a range of 01 to 36. If the computed opposite
       number is 0, it wraps around to 36.
-    - Left ('L') and right ('R') suffixes are swapped for the opposite runway, while 
+    - Left ('L') and right ('R') suffixes are swapped for the opposite runway, while
       the center ('C') suffix remains unchanged.
 
     Example:
     --------
     >>> find_opposite_runway("09L")
     '27R'
-    
+
     >>> find_opposite_runway("36")
     '18'
     """
 
     # Extract the number part of the runway
     number_part = int(runway[:-1] if runway[-1] in "LRC" else runway)
-    
+
     # Compute the opposite runway number by adding/subtracting 18
     opposite_number = (number_part + 18) % 36
     if opposite_number == 0:
@@ -102,26 +110,25 @@ def find_opposite_runway(runway: str) -> str:
     opposite_number_str = f"{opposite_number:02d}"
 
     # Handle the suffix if present
-    if runway[-1] == 'L':
-        suffix = 'R'
-    elif runway[-1] == 'R':
-        suffix = 'L'
-    elif runway[-1] == 'C':
-        suffix = 'C'
+    if runway[-1] == "L":
+        suffix = "R"
+    elif runway[-1] == "R":
+        suffix = "L"
+    elif runway[-1] == "C":
+        suffix = "C"
     else:
-        suffix = ''
+        suffix = ""
 
     # Combine the opposite number with the suffix
     return f"{opposite_number_str}{suffix}"
 
 
-def get_Box_around_Rwy(Rwy: str,
-                       airport_str: str,
-                       extension_distance=0.002,
-                       extension_width = 0.0004):
+def get_Box_around_Rwy(
+    Rwy: str, airport_str: str, extension_distance=0.002, extension_width=0.0004
+):
     """
-    Generates a rectangular bounding box around a specified runway by extending its length 
-    and width, based on given parameters. This bounding box can be useful for spatial analysis 
+    Generates a rectangular bounding box around a specified runway by extending its length
+    and width, based on given parameters. This bounding box can be useful for spatial analysis
     or for identifying areas around the runway.
     """
 
@@ -143,53 +150,53 @@ def get_Box_around_Rwy(Rwy: str,
     rwy = LineString([point1, point2])
 
     # Extend both ends of the line
-    rwy_box = LineString([extend_point(point2, point1, extension_distance),
-                          extend_point(point1, point2, extension_distance)])
+    rwy_box = LineString(
+        [
+            extend_point(point2, point1, extension_distance),
+            extend_point(point1, point2, extension_distance),
+        ]
+    )
 
     # Extend width by buffering
-    rwy_box = rwy_box.buffer(distance=extension_width, cap_style='square')
+    rwy_box = rwy_box.buffer(distance=extension_width, cap_style="square")
     return rwy_box
 
 
-def takeoff_detection(traj,
-                       airport_str = 'LSZH'
-                       ) -> str:
+def takeoff_detection(flight: Flight, airport_str="LSZH") -> str:
     """
-    Detects takeoff events from a given aircraft trajectory and updates trajectory data.
+    Detects takeoff events from a given aircraft trajectory and updates its trajectory data.
 
-    This function determines if a given trajectory corresponds to a takeoff at a specified airport. 
-    If a takeoff is detected, the runway used for takeoff and the lineup time are identified and 
-    appended to the trajectory data.
+    This function identifies whether a provided flight trajectory corresponds to a takeoff event
+    at a specified airport. If detected, the function determines the runway used and the lineup time,
+    which are then added as new attributes to the trajectory data.
 
     Args:
-        traj (Trajectory): The trajectory object containing flight data, including positions 
-                           and timestamps.
-        airport_str (str, optional): The ICAO code of the airport to detect takeoff from.
-                                     Defaults to 'LSZH' (Zurich Airport).
+        flight (Flight): A traffic.core.Flight object containing trajectory data, including positions
+                         and timestamps.
+        airport_str (str, optional): The ICAO code of the airport to detect takeoff from. Defaults to 'LSZH'.
 
     Returns:
-        Trajectory: The input trajectory with updated attributes:
-            - 'lineupTime2' (float): The time of lineup on the runway, or NaN if no takeoff.
-            - 'takeoffRunway2' (str): The runway used for takeoff, or an empty string if none.
-            - 'isTakeoff2' (bool): Boolean flag indicating whether a takeoff was detected.
-    
+        Flight: The same Flight object with additional columns in its data:
+            - 'lineupTime' (pd.Timestamp or NaN): The timestamp of lineup on the runway, or NaN if no takeoff is detected.
+            - 'takeoffRunway' (str): The runway used for takeoff, or an empty string if no runway is detected.
+            - 'isTakeoff' (bool): A boolean flag indicating whether a takeoff was detected.
+
     Notes:
-        - The function uses a runway geometry box to detect whether the trajectory aligns with 
-          the takeoff process.
-        - The trajectory is clipped to the box around the runway for better accuracy in detecting 
-          the takeoff.
+        - The function uses a track-based method to detect takeoff events.
+        - The detection process involves generating a geometry box around the detected runway.
+        - The trajectory is clipped to this geometry box for improved accuracy in takeoff detection.
+        - This function modifies the 'flight.data' DataFrame by adding new columns: 'lineupTime', 'takeoffRunway', and 'isTakeoff'.
 
     Example:
-        >>> updated_traj = takeoff_detection(traj, airport_str='LSZH')
+        >>> updated_flight = takeoff_detection(flight, airport_str='LSZH')
     """
-    
+
     lineupTime = np.nan
     isTakeoff = False
+    takeoffRunway = ""
 
-    if ~traj.landing_at(airport_str):
-
-        # Classification of takeoff using new routine
-        takeoffRunway = traj.get_toff_runway(airport_str)
+    if takeoff := flight.takeoff(airport_str, method="track_based").next():
+        takeoffRunway = takeoff.runway_max
 
         if takeoffRunway is not None:
             isTakeoff = True
@@ -197,165 +204,361 @@ def takeoff_detection(traj,
             # Get runway geometry (box around runway)
             rwy_box = get_Box_around_Rwy(takeoffRunway, airport_str)
 
-            clipped_traj = traj.clip(rwy_box)
+            clipped = flight.clip(rwy_box)
 
-            if clipped_traj is not None and not clipped_traj.data.empty:
-                lineupTime = clipped_traj.start
+            if clipped is not None and not clipped.data.empty:
+                lineupTime = clipped.start
         else:
-            takeoffRunway=''
+            takeoffRunway = ""
 
-    traj.data = traj.data.copy()
-    traj.data.loc[:, 'lineupTime'] = lineupTime
-    traj.data.loc[:, 'takeoffRunway'] = takeoffRunway
-    traj.data.loc[:, 'isTakeoff'] = isTakeoff
+    flight.data = flight.data.copy()
+    flight.data.loc[:, "lineupTime"] = lineupTime
+    flight.data.loc[:, "takeoffRunway"] = takeoffRunway
+    flight.data.loc[:, "isTakeoff"] = isTakeoff
 
-    return traj
-
-
-def alternative_pushback_detection(traj, standAreas, airport_str='LSZH'):
-    """
-    Detects and calculates pushback and taxiing characteristics for a given aircraft trajectory during takeoff.
-
-    This function determines whether an aircraft has performed a pushback before taxiing by checking if the 
-    trajectory intersects defined stand areas. If pushback is detected, it calculates the start and duration of 
-    pushback, the start time of taxiing, as well as taxi duration and distance. It also updates the trajectory 
-    data with pushback and taxi attributes.
-
-    Parameters:
-    -----------
-    traj : Trajectory
-        The aircraft trajectory object containing time series data of the aircraft's ground movement and status.
-    
-    standAreas : list of Polygon
-        List of polygonal areas representing possible stand locations where aircraft might initiate pushback.
-    
-    airport_str : str, optional
-        String representing the airport code (default is 'LSZH') for location-specific data handling.
-
-    Returns:
-    --------
-    traj : Trajectory
-        Updated trajectory object with additional attributes:
-        - isPushback (bool): Whether the aircraft performed a pushback.
-        - startPushback (datetime): The start time of the pushback maneuver, if detected.
-        - startTaxi (datetime): The start time of the taxiing phase.
-        - pushbackDuration (timedelta): Duration of the pushback phase.
-        - taxiDuration (timedelta): Duration of the taxiing phase.
-        - taxiDistance (float): Total distance covered during taxiing in meters.
-
-    Notes:
-    ------
-    - The function is specifically designed for analyzing takeoff events.
-    - If the ground coverage is incomplete or trajectory segments are missing, 
-      adjustments may be made to the pushback and taxi timings.
-    - The calculated `taxiDuration` and `taxiDistance` are only valid for takeoff movements 
-      with available lineup times.
-
-    Example:
-    --------
-    traj = alternative_pushback_detection(traj, standAreas, airport_str='LSZH')
-    """
+    return flight
 
 
-    lineupTime = traj.data.lineupTime.iloc[0]
+def apron_events(
+    flight: Flight, standAreas: list, airport_str="LSZH", gs_threshold=1
+) -> Flight:
+    lineupTime = pd.Timestamp(flight.data.lineupTime.iloc[0])
     taxiDuration = np.nan
     taxiDistance = np.nan
     startPushback = np.nan
     pushbackDuration = np.nan
     startTaxi = np.nan
     isPushback = False
+    parking_position = None
+    """
+    Detects and annotates apron-level events including pushback, taxi, and parking position for a given flight.
+
+    This function analyzes the ground movement of a flight before takeoff to identify key events such as pushback, 
+    taxi start, pushback duration, taxi duration, taxi distance, and parking position. It uses spatial and temporal 
+    filtering techniques to detect these events and applies only to flights that are marked as takeoffs.
+
+    Args:
+        flight (Flight): A traffic.core.Flight object containing trajectory data, including positions and timestamps.
+        standAreas (list): A list of shapely geometries representing nose-in, push-out stand areas at the airport.
+        airport_str (str, optional): The ICAO code of the airport for which parking position information is retrieved. 
+                                     Defaults to "LSZH" (Zurich Airport).
+        gs_threshold (float, optional): Groundspeed threshold (in knots or m/s) used to determine when the aircraft 
+                                        is considered moving. Defaults to 1.
+
+    Returns:
+        Flight: The same Flight object with the following additional columns in its `flight.data` DataFrame:
+            - 'isPushback' (bool): True if a pushback maneuver was detected, False otherwise.
+            - 'startPushback' (pd.Timestamp or NaT): Start time of the pushback maneuver.
+            - 'startTaxi' (pd.Timestamp or NaT): Start time of the taxi phase.
+            - 'pushbackDuration' (pd.Timedelta or NaT): Duration of the pushback maneuver.
+            - 'taxiDuration' (pd.Timedelta or NaN): Duration of the taxi phase until lineup.
+            - 'taxiDistance' (float or NaN): Distance covered during taxi, computed from cumulative distance.
+            - 'parking_position' (str or None): Detected parking position, if available.
+
+    Notes:
+        - Pushback is detected if the flight trajectory intersects with any predefined stand area geometry for 
+          a duration of at least 20 seconds.
+        - The function applies a rolling median filter to smooth groundspeed values before detecting motion.
+        - Trajectories are filtered to exclude data points within 0.03 NM (approximately 50 meters) of the initial position,
+          which helps eliminate noisy data when the aircraft is stationary.
+        - The function groups trajectory points into motion segments using a timestamp difference of more than 1 minute.
+        - If pushback is not detected, the start of taxi is estimated from the first point where groundspeed exceeds the threshold.
+        - Parking position is estimated based on trajectory segments closest to the apron departure time.
+        - The function adds several new columns to the `flight.data` DataFrame, which should be handled appropriately when analyzing results.
+
+    Example:
+        >>> updated_flight = apron_events(flight, standAreas, airport_str='LSZH', gs_threshold=1)
+    """
 
     # Apply pushback and taxi detection only to takeoffs
-    if traj.data.isTakeoff.iloc[0]:
+    if flight.isTakeoff_max:
+        # Get taxi-part of trajectory
+        # Calculate the position of the flight from its initial position (i.e. the stand)
+        if len(flight.first(1).data) > 1:
+            flight = flight.resample("1s")
+        first_position = flight.at(flight.start)
+        flight = flight.distance(other=first_position)  # add column distance
 
+        # only consider the part of the trajectory which is 0.03 away from the initial position (to avoid noisy data on the stands)
+        taxi = flight.query("distance > 0.03")
+
+        # Get parts of flight where it is moving
+        if taxi is not None:
+            # moving = taxi.data[taxi.data["compute_gs"] > gs_threshold].copy()
+
+            moving = taxi.data.copy()
+            moving["compute_gs"] = (
+                moving["compute_gs"].rolling(window=21, center=True).median()
+            )
+            moving = moving[moving.compute_gs > gs_threshold]
+        else:
+            moving = flight.data.copy()
+            taxi = flight
 
         # Pushback Detection
         for i, standArea in enumerate(standAreas):
-            clipped_traj = traj.clip(standArea)
+            clipped_traj = taxi.clip(standArea)
 
             # Check whether traj is inside stand_area
-            if (clipped_traj is None) or (clipped_traj.data.empty):
-                        continue
+            if (
+                (clipped_traj is None)
+                or (clipped_traj.data.empty)
+                or clipped_traj.duration < pd.Timedelta(seconds=20)
+            ):
+                continue
             else:
                 isPushback = True
-                break   
-        
+                break
+
         if isPushback and (clipped_traj is not None):
-
-            df = traj.data
-            nonzeroGS = df.compute_gs.rolling(5).median() > 1
+            # Get time when the flight leaves the stand area
             leaveStandTime = clipped_traj.stop
-            leaveStandTimeIndex = df[df['timestamp']==leaveStandTime].index[0]
 
-            # Find the start of the pushback
-            startPushbackIndex = leaveStandTimeIndex
-            while startPushbackIndex > 0 and nonzeroGS.loc[startPushbackIndex - 1]:
-                startPushbackIndex -= 1
+            # Identify consecutive groups where compute_gs is above threshold -> groups of "moving"
+            moving["group"] = (
+                (moving["timestamp"].diff() > pd.Timedelta(minutes=1))
+                .fillna(False)
+                .astype("int")
+                .cumsum()
+            )
 
-            # Find the end of the pushback
-            endPushbackIndex = leaveStandTimeIndex
-            while endPushbackIndex < df.index.max() and nonzeroGS.loc[endPushbackIndex + 1]:
-                endPushbackIndex += 1
+            # Find the group where leaveStandTime falls within the timestamp range
+            group = moving[
+                (moving["timestamp"] <= leaveStandTime)
+                & (moving["timestamp"].shift(-1) >= leaveStandTime)
+            ]["group"]
 
-            startPushback = df.loc[startPushbackIndex, 'timestamp']
-            startTaxi = df.loc[endPushbackIndex, 'timestamp']
+            if not group.empty:
+                group_id = group.iloc[0]
 
-            # If start and end of pushback are identical
-            if startPushback == startTaxi:
-                startPushback = startPushback - timedelta(seconds=2)
+                # Extract the start and stop timestamps for that group
+                group_data = moving[moving["group"] == group_id]
+                startPushback = pd.Timestamp(group_data["timestamp"].min())
+                startTaxi = pd.Timestamp(group_data["timestamp"].max())
+            else:
+                startPushback = leaveStandTime
+                startTaxi = leaveStandTime
 
             # Pushback duration
             pushbackDuration = startTaxi - startPushback
 
-            # Check if taxiDuration is less than 0 seconds. This can happen if the ground coverage is not perfect and parts of the traj are missing.
-            if (lineupTime - startTaxi) < timedelta(seconds=0):
+            # Check if taxiDuration is less than 20 seconds. This can happen if the ground coverage is not perfect and parts of the traj are missing.
+            # if (lineupTime - startTaxi) < timedelta(seconds=0):
+            if (lineupTime - startTaxi) < pd.Timedelta(seconds=20):
                 startTaxi = leaveStandTime
                 isPushback = False
                 startPushback = np.nan
                 pushbackDuration = np.nan
 
+            # Determine Parking Positions of Flight
+            parking_segments = flight.parking_position(airport_str)
+
+            # Make sure that the parking position is the segment closest to leaveStandTime
+            if parking_segments is not None:
+                timedeltas = []
+
+                for segment in parking_segments:
+                    timedeltas.append(abs(segment.stop - leaveStandTime))
+
+                # Check whether the list contains elements:
+                if timedeltas:
+                    min_index = timedeltas.index(min(timedeltas))
+                    parking_position = (
+                        parking_segments[min_index].data.iloc[0].parking_position
+                    )
+
         # If takeoff is not pushback, check for stand
         else:
+            # Select parking position segment with longest duration
+            try:
+                if flight.parking_position is not None:
+                    parking = flight.parking_position(airport_str).max()
+                else:
+                    parking = None
+            except:
+                parking = None
 
-            parkingPosition = traj.on_parking_position(airport_str).max()
+            # Determine start of taxi (moment when the aircraft starts moving)
+            if not moving.empty:
+                if moving.timestamp.iloc[0] is not None:
+                    startTaxi = moving.timestamp.iloc[0]
 
-            if (parkingPosition is not None) and (parkingPosition.duration > timedelta(seconds=30)):
-                startTaxi = parkingPosition.stop
-            # It it is a takeoff, but neither a pushback nor a stand can be detected
-            else:
-                startTaxi = traj.start if not traj.data.empty else np.nan
+            # Determine Parking Position of Flight (if there is one)
+            if (parking is not None) and (parking.duration > pd.Timedelta(seconds=30)):
+                parking_position = parking.parking_position_max
 
         # Calculate taxiDuration
-        taxiDuration = lineupTime - startTaxi
+        if (
+            (startTaxi is not np.nan)
+            & (startTaxi is not None)
+            & (lineupTime is not np.nan)
+            & (lineupTime is not None)
+        ):
+            if (
+                lineupTime - startTaxi >= pd.Timedelta(seconds=2)
+            ):  # Do not remove the 2 seconds --> for shorter lineup-taxi times, it produces an error
+                taxiDuration = lineupTime - startTaxi
+                taxiDistance = (
+                    flight.between(startTaxi, lineupTime).data.cumdist.iloc[-1]
+                    - flight.between(startTaxi, lineupTime).data.cumdist.iloc[0]
+                )
+            else:
+                taxiDuration = pd.Timedelta(seconds=0)
+                taxiDistance = 0
 
-        # Calcualte taxiDistance
-        if (taxiDuration is not np.nan) and (taxiDuration > timedelta(seconds=0)):
-            taxi = traj.between(startTaxi, lineupTime)
-            taxiDistance = taxi.data.cumdist.iloc[-1] - taxi.data.cumdist.iloc[0]
-        
+        # # Calculate taxiDistance
+        # if taxiDuration is not np.nan:
+        #     taxi = flight.between(startTaxi, lineupTime)
+
+        #     if taxi is not None:
+        #         taxiDistance = taxi.data.cumdist.iloc[-1] - taxi.data.cumdist.iloc[0]
+
     # Write data to traj
-    traj.data = traj.data.copy()
-    traj.data.loc[:, 'isPushback'] = isPushback
-    traj.data.loc[:, 'startPushback'] = startPushback
-    traj.data.loc[:, 'startTaxi'] = startTaxi
-    traj.data.loc[:, 'pushbackDuration'] = pushbackDuration
-    traj.data.loc[:, 'taxiDuration'] = taxiDuration
-    traj.data.loc[:, 'taxiDistance'] = taxiDistance
+    flight.data = flight.data.copy()
+    flight.data.loc[:, "isPushback"] = isPushback
+    flight.data.loc[:, "startPushback"] = startPushback
+    flight.data.loc[:, "startTaxi"] = startTaxi
+    flight.data.loc[:, "pushbackDuration"] = pushbackDuration
+    flight.data.loc[:, "taxiDuration"] = taxiDuration
+    flight.data.loc[:, "taxiDistance"] = taxiDistance
+    flight.data.loc[:, "parking_position"] = parking_position
 
-    return traj
+    return flight
+
+
+def taxi_dist_dur(flight: Flight) -> Flight:
+    """
+    Computes taxi distance and duration for a flight trajectory.
+
+    This function calculates the taxi distance and duration from the start of taxi to lineup time
+    for a given flight trajectory. It updates the flight data with these computed values.
+
+    Parameters:
+        flight (Flight): A traffic.core.Flight object containing trajectory data,
+                         with computed `startTaxi` and `lineupTime`.
+
+    Returns:
+        Flight: The same Flight object, with additional columns added to `flight.data`:
+            - `taxiDuration`: Duration of the taxi phase.
+            - `taxiDistance`: Distance covered during taxiing.
+
+    Notes:
+        - Taxi distance and duration are calculated only if both `startTaxi` and `lineupTime` are defined.
+        - If the taxi duration is less than 2 seconds, it is set to 0.
+    """
+
+    startTaxi = flight.data.startTaxi.iloc[0]
+    lineupTime = flight.data.lineupTime.iloc[0]
+    taxiDuration = np.nan
+    taxiDistance = np.nan
+
+    # Apply pushback and taxi detection only to takeoffs
+    if flight.isTakeoff_max:
+        if (
+            (startTaxi is not np.nan)
+            & (startTaxi is not None)
+            & (startTaxi is not pd.NA)
+            & (lineupTime is not np.nan)
+            & (lineupTime is not None)
+            & (lineupTime is not pd.NA)
+        ):
+            if lineupTime - startTaxi >= pd.Timedelta(seconds=2):
+                taxiDuration = lineupTime - startTaxi
+                taxi_cumdist = flight.between(startTaxi, lineupTime).data.cumdist
+
+                if taxi_cumdist is not None:
+                    taxiDistance = taxi_cumdist.iloc[-1] - taxi_cumdist.iloc[0]
+                else:
+                    taxiDistance = 0
+            else:
+                taxiDuration = pd.Timedelta(seconds=0)
+                taxiDistance = 0
+
+    flight.data = flight.data.copy()
+    flight.data.loc[:, "taxiDuration"] = taxiDuration
+    flight.data.loc[:, "taxiDistance"] = taxiDistance
+
+    return flight
+
+
+def gs_cumdist_diff(flight: Flight) -> Flight:
+    startTaxi = flight.data.startTaxi.iloc[0]
+    lineupTime = flight.data.lineupTime.iloc[0]
+    min_compute_gs_diff = np.nan
+    max_compute_gs_diff = np.nan
+    max_cumdist_diff = np.nan
+    first_altitude = np.nan
+    """
+    Computes diagnostic metrics for a flight trajectory during taxi, to help identify potential data issues
+    or landings misclassified as takeoffs.
+
+    This function calculates:
+    - The maximum altitude reached during the first 10 seconds after takeoff.
+    - The minimum and maximum differences in groundspeed (`compute_gs.diff()`).
+    - The maximum difference in cumulative distance (`cumdist.diff()`).
+
+    These values are useful for post-processing and filtering, particularly for identifying
+    cases where landing trajectories might be misinterpreted as takeoffs.
+
+    Parameters:
+        flight (Flight): A `traffic.core.Flight` object containing trajectory data,
+                         with computed `startTaxi`, `lineupTime`, and `compute_gs`.
+
+    Returns:
+        Flight: The same Flight object, with additional diagnostic columns added to `flight.data`:
+            - `first_altitude`: Maximum observed altitude in the first 10 seconds of the flight.
+            - `min_compute_gs_diff`: Minimum difference in groundspeed during taxi.
+            - `max_compute_gs_diff`: Maximum difference in groundspeed during taxi.
+            - `max_cumdist_diff`: Maximum difference in cumulative distance during taxi.
+
+    Notes:
+        - Metrics are only computed for takeoff flights (`flight.isTakeoff_max` is True).
+        - If the taxi interval is not well-defined or less than 2 seconds, fallback logic uses data before lineup time.
+        - These indicators can help detect abnormal taxi profiles or wrongly detected takeoffs.
+    """
+
+    if flight.isTakeoff_max:
+        # Get max observed altitude during first 10 seconds of flight --> Used to identify landings wrongly classified as takeoffs
+        first_altitude = flight.first(seconds=10).data.altitude.max()
+
+        # Calculate min and max compute_gs.diff() for part on the ground
+        if (startTaxi is not np.nan) | (lineupTime is not np.nan):
+            if lineupTime - startTaxi >= pd.Timedelta(seconds=2):
+                compute_gs = flight.between(startTaxi, lineupTime).data["compute_gs"]
+                cumdist = flight.between(startTaxi, lineupTime).data["cumdist"]
+                if compute_gs is not None:
+                    min_compute_gs_diff = compute_gs.diff().min()
+                    max_compute_gs_diff = compute_gs.diff().max()
+                    max_cumdist_diff = cumdist.diff().max()
+
+        else:
+            compute_gs = flight.before(lineupTime).data["compute_gs"]
+            cumdist = flight.before(lineupTime).data["cumdist"]
+            if compute_gs is not None:
+                min_compute_gs_diff = compute_gs.diff().min()
+                max_compute_gs_diff = compute_gs.diff().max()
+                max_cumdist_diff = cumdist.diff().max()
+
+    flight.data = flight.data.copy()
+    flight.data.loc[:, "first_altitude"] = first_altitude
+    flight.data.loc[:, "min_compute_gs_diff"] = min_compute_gs_diff
+    flight.data.loc[:, "max_compute_gs_diff"] = max_compute_gs_diff
+    flight.data.loc[:, "max_cumdist_diff"] = max_cumdist_diff
+
+    return flight
 
 
 def add_known_missing_icao24(df_movements: pd.DataFrame) -> pd.DataFrame:
     """
-    Enhances the aircraft movement DataFrame by merging with a dataset of missing ICAO24 codes to fill in 
-    missing aircraft type and typecode information. This function helps in completing aircraft information 
+    Enhances the aircraft movement DataFrame by merging with a dataset of missing ICAO24 codes to fill in
+    missing aircraft type and typecode information. This function helps in completing aircraft information
     based on known ICAO24 codes and handles specific column renaming and replacement tasks.
 
     Parameters:
     -----------
     df_movements : pd.DataFrame
         DataFrame containing aircraft movements, with columns including 'icao24', 'typecode', and 'icaoaircrafttype'.
-    
+
     Returns:
     --------
     pd.DataFrame
@@ -363,9 +566,9 @@ def add_known_missing_icao24(df_movements: pd.DataFrame) -> pd.DataFrame:
 
     Process:
     --------
-    - Merges `df_movements` with `DF_MISSING_ICAO24` on the 'icao24' column using a left join to pull in missing 
+    - Merges `df_movements` with `DF_MISSING_ICAO24` on the 'icao24' column using a left join to pull in missing
       'typecode' and 'icaoaircrafttype' values where available.
-    - Uses the `combine_first` method to prioritize original `df_movements` typecode values where they exist, 
+    - Uses the `combine_first` method to prioritize original `df_movements` typecode values where they exist,
       filling in with the merged values if not.
     - Updates `icaoaircrafttype` based on available data in the merged columns.
     - Drops redundant columns resulting from the merge and renames the updated columns to match the original names.
@@ -374,7 +577,7 @@ def add_known_missing_icao24(df_movements: pd.DataFrame) -> pd.DataFrame:
     Notes:
     ------
     - Assumes `DF_MISSING_ICAO24` is a DataFrame with columns 'icao24', 'typecode', and 'icaoaircrafttype'.
-    - This function is useful in cases where certain `icao24` entries may be incomplete in the original dataset 
+    - This function is useful in cases where certain `icao24` entries may be incomplete in the original dataset
       and a secondary dataset can help fill in the gaps.
 
     Example:
@@ -383,28 +586,37 @@ def add_known_missing_icao24(df_movements: pd.DataFrame) -> pd.DataFrame:
     """
 
     # Merge df_movements with missing icao24 df
-    df_movements = df_movements.merge(DF_MISSING_ICAO24[['icao24', 'typecode', 'icaoaircrafttype']], 
-                                    on='icao24', 
-                                    how='left')
+    df_movements = df_movements.merge(
+        DF_MISSING_ICAO24[["icao24", "typecode", "icaoaircrafttype"]],
+        on="icao24",
+        how="left",
+    )
 
-    df_movements['typecode_x'] = df_movements['typecode_x'].combine_first(df_movements['typecode_y'])
+    df_movements["typecode_x"] = df_movements["typecode_x"].combine_first(
+        df_movements["typecode_y"]
+    )
     # df_movements['icaoaircrafttype_x'] = df_movements['icaoaircrafttype_x'].combine_first(df_movements['icaoaircrafttype_y'])
-    df_movements.loc[df_movements['icaoaircrafttype_y'].notna(), 'icaoaircrafttype_x'] = df_movements['icaoaircrafttype_y']
-    df_movements.drop(columns=['typecode_y', 'icaoaircrafttype_y'], inplace=True)
+    df_movements.loc[
+        df_movements["icaoaircrafttype_y"].notna(), "icaoaircrafttype_x"
+    ] = df_movements["icaoaircrafttype_y"]
+    df_movements.drop(columns=["typecode_y", "icaoaircrafttype_y"], inplace=True)
 
     # Rename specific columns
-    df_movements = df_movements.rename(columns={'typecode_x': 'typecode', 
-                                                'icaoaircrafttype_x': 'icaoaircrafttype'})
-    
-    # Replace 'C68A' with 'L2J' in the 'icaoaircrafttype' column 
-    df_movements.loc[df_movements['icaoaircrafttype'] == 'C68A', 'icaoaircrafttype'] = 'L2J'
+    df_movements = df_movements.rename(
+        columns={"typecode_x": "typecode", "icaoaircrafttype_x": "icaoaircrafttype"}
+    )
 
+    # Replace 'C68A' with 'L2J' in the 'icaoaircrafttype' column
+    df_movements.loc[df_movements["icaoaircrafttype"] == "C68A", "icaoaircrafttype"] = (
+        "L2J"
+    )
 
     return df_movements
 
+
 def remove_helos_and_outliers(df_movements: pd.DataFrame) -> pd.DataFrame:
     """
-    Filters out helicopter movements and outliers from an aircraft movements DataFrame based on 
+    Filters out helicopter movements and outliers from an aircraft movements DataFrame based on
     specific criteria to ensure data quality for further analysis.
 
     This function removes rows where:
@@ -415,7 +627,7 @@ def remove_helos_and_outliers(df_movements: pd.DataFrame) -> pd.DataFrame:
     Parameters:
     -----------
     df_movements : pd.DataFrame
-        DataFrame containing aircraft movement data with columns such as 'icaoaircrafttype', 
+        DataFrame containing aircraft movement data with columns such as 'icaoaircrafttype',
         'taxiDistance', 'lineupTime', and 'taxiDuration'.
 
     Returns:
@@ -434,119 +646,153 @@ def remove_helos_and_outliers(df_movements: pd.DataFrame) -> pd.DataFrame:
     df_filtered = remove_helos_and_outliers(df_movements)
     """
 
-    # Filter out rows where 'icaoaircrafttype' contains 'H' anywhere in the string
-    df_movements = df_movements[~df_movements['icaoaircrafttype'].str.contains('H', case=False, na=False)]
+    # Remove takeoffs on runway 14
+    df_movements = df_movements[~df_movements["takeoffRunway"].str.contains("14")]
 
-    # Filter out trajectories which have taxi distances of NaN
-    df_movements = df_movements[~df_movements['taxiDistance'].isna()]
+    # Remove flights with an initial altitude (first 10 seconds) larger than 2000ft -> Landings wrongly classified as takeoffs.
+    # We keep rows where first_altitude is NaN
+    df_movements = df_movements[
+        (
+            (df_movements["first_altitude"] < 2000)
+            | df_movements["first_altitude"].isna()
+        )
+    ]
 
-    # Filter out trajectories which have taxi distances of NaN
-    df_movements = df_movements[~df_movements['lineupTime'].isna()]
+    # Remove rows where 'icaoaircrafttype' contains 'H' anywhere in the string -> Remove helicopters
+    df_movements = df_movements[
+        ~df_movements["icaoaircrafttype"].str.contains("H", case=False, na=False)
+    ]
 
-    # Filter trajectories which have taxiDurations of less than 0
-    df_movements =df_movements[~(df_movements['taxiDuration'] < pd.Timedelta(0))]
+    # Remove flights which have taxi distances of NaN
+    df_movements = df_movements[~df_movements["taxiDistance"].isna()]
+
+    # Remove flights which have lineup times of NaN
+    df_movements = df_movements[~df_movements["lineupTime"].isna()]
+
+    # Remove flights which have taxiDurations of 0 or less
+    df_movements = df_movements[~(df_movements["taxiDuration"] <= pd.Timedelta(0))]
+
+    # Remove flights whose max_compute_gs_diff is greater than 200 and max_cumdist_diff ist creater than 0.1
+    df_movements = df_movements[
+        (df_movements["max_compute_gs_diff"] < 200)
+        & (df_movements["min_compute_gs_diff"] > -200)
+        & (df_movements["max_cumdist_diff"] < 0.1)
+    ]
 
     return df_movements
 
 
-def get_df_movements(gnd_trajs) -> pd.DataFrame:
+def get_df_movements(df) -> pd.DataFrame:
     """
-    Summarizes ground trajectory data by grouping information by flight ID and extracting key 
-    attributes for each unique flight to create a clean, summarized DataFrame of movements.
+    Filters helicopter movements and erroneous data points from an aircraft movements DataFrame.
 
-    This function filters out flights without takeoff runway information, groups the data by 
-    `flight_id`, and retrieves essential fields for each flight, such as `icao24`, `callsign`, 
-    pushback and taxi timings, taxi duration and distance, and takeoff runway.
+    This function applies multiple filtering criteria to clean the input DataFrame by removing:
+    - Helicopter movements identified via 'icaoaircrafttype' containing 'H'.
+    - Data points with missing or invalid entries in critical columns ('taxiDistance', 'lineupTime', 'taxiDuration').
+    - Movements with unrealistic taxi durations (e.g., zero or negative durations).
+    - Landings mistakenly classified as takeoffs based on initial altitude thresholds.
+    - Movements with extreme values in computed ground speed and cumulative distance differences.
+    - Takeoffs from a specific runway (14), which may be outside the scope of analysis.
 
     Parameters:
     -----------
-    gnd_trajs : pd.DataFrame
-        DataFrame containing ground trajectory data with columns including 'flight_id', 'icao24', 
-        'callsign', 'isTakeoff', 'isPushback', 'startPushback', 'startTaxi', 'lineupTime', 
-        'taxiDuration', 'taxiDistance', 'takeoffRunway', 'typecode', and 'icaoaircrafttype'.
+    df_movements : pd.DataFrame
+        A DataFrame containing aircraft movement data with the following relevant columns:
+        - 'icaoaircrafttype' (str): Aircraft type code.
+        - 'takeoffRunway' (str): The runway used for takeoff.
+        - 'first_altitude' (float): Maximum altitude reached during the first 10 seconds of flight.
+        - 'taxiDistance' (float): The total taxi distance covered.
+        - 'lineupTime' (Timestamp): The timestamp indicating lineup for takeoff.
+        - 'taxiDuration' (Timedelta): The total time spent taxiing.
+        - 'max_compute_gs_diff' (float): Maximum difference in computed groundspeed.
+        - 'min_compute_gs_diff' (float): Minimum difference in computed groundspeed.
+        - 'max_cumdist_diff' (float): Maximum difference in cumulative distance.
 
     Returns:
     --------
     pd.DataFrame
-        Summarized DataFrame `df_movements` containing one row per flight with the following columns:
-        - 'flight_id': Unique identifier for each flight.
-        - 'icao24': Aircraft identifier.
-        - 'callsign': Flight callsign.
-        - 'isTakeoff': Boolean indicating whether the flight is a takeoff.
-        - 'isPushback': Boolean indicating whether pushback was performed.
-        - 'startPushback': Timestamp of the start of pushback.
-        - 'startTaxi': Timestamp of the start of taxiing.
-        - 'lineupTime': Timestamp of the lineup for takeoff.
-        - 'taxiDuration': Duration of the taxiing phase.
-        - 'taxiDistance': Distance covered during taxiing.
-        - 'takeoffRunway': The runway used for takeoff.
-        - 'typecode': Type code of the aircraft.
-        - 'icaoaircrafttype': ICAO aircraft type code.
+        A cleaned DataFrame with invalid rows removed according to the filtering criteria.
 
-    Notes:
-    ------
-    - Flights without a specified `takeoffRunway` are filtered out.
-    - Uses the first available value in each grouped column for each flight.
-    - Ensures that the resulting DataFrame has a clean, reset index.
+    Filtering Criteria:
+    -------------------
+    1. Helicopter Removal:
+       - Excludes rows where 'icaoaircrafttype' contains 'H' (case-insensitive).
+    2. Takeoff Runway Filtering:
+       - Removes takeoffs from runway 14.
+    3. Initial Altitude Filtering:
+       - Excludes rows where 'first_altitude' > 2000 ft, allowing NaN values to remain.
+    4. Missing Data Removal:
+       - Excludes rows with NaN values in 'taxiDistance' and 'lineupTime'.
+    5. Taxi Duration Filtering:
+       - Excludes rows where 'taxiDuration' is zero or negative.
+    6. Ground Speed and Distance Filtering:
+       - Filters out rows where 'max_compute_gs_diff' > 200 or 'min_compute_gs_diff' < -200.
+       - Filters out rows where 'max_cumdist_diff' >= 0.1.
 
     Example:
     --------
-    df_movements = get_df_movements(gnd_trajs)
+    >>> df_filtered = remove_helos_and_outliers(df_movements)
     """
 
     # Group by 'flight_id'
-    grouped = gnd_trajs.query('takeoffRunway != ""').groupby('flight_id')
-    
+    grouped = df.query('takeoffRunway != ""').groupby("flight_id")
+
     # Create a new DataFrame df_movements to store the summarized data
     df_movements = pd.DataFrame()
-    
+
     # Extract the required information
-    df_movements['flight_id'] = grouped['flight_id'].first()
-    df_movements['icao24'] = grouped['icao24'].first()
-    df_movements['callsign'] = grouped['callsign'].first()
-    df_movements['isTakeoff'] = grouped['isTakeoff'].first()
-    df_movements['isPushback'] = grouped['isPushback'].first()
-    df_movements['startPushback'] = grouped['startPushback'].first()
-    df_movements['startTaxi'] = grouped['startTaxi'].first()
-    df_movements['lineupTime'] = grouped['lineupTime'].first()
-    df_movements['taxiDuration'] = grouped['taxiDuration'].first()
-    df_movements['taxiDistance'] = grouped['taxiDistance'].first()
-    df_movements['takeoffRunway'] = grouped['takeoffRunway'].first()
-    df_movements['typecode'] = grouped['typecode'].first()
-    df_movements['icaoaircrafttype'] = grouped['icaoaircrafttype'].first()
-    
+    df_movements["flight_id"] = grouped["flight_id"].first()
+    df_movements["icao24"] = grouped["icao24"].first()
+    df_movements["callsign"] = grouped["callsign"].first()
+    df_movements["isTakeoff"] = grouped["isTakeoff"].first()
+    df_movements["isPushback"] = grouped["isPushback"].first()
+    df_movements["startPushback"] = grouped["startPushback"].first()
+    df_movements["startTaxi"] = grouped["startTaxi"].first()
+    df_movements["lineupTime"] = grouped["lineupTime"].first()
+    df_movements["taxiDuration"] = grouped["taxiDuration"].first()
+    df_movements["taxiDistance"] = grouped["taxiDistance"].first()
+    df_movements["takeoffRunway"] = grouped["takeoffRunway"].first()
+    df_movements["parking_position"] = grouped["parking_position"].first()
+    df_movements["typecode"] = grouped["typecode"].first()
+    df_movements["icaoaircrafttype"] = grouped["icaoaircrafttype"].first()
+    df_movements["min_compute_gs_diff"] = grouped["min_compute_gs_diff"].first()
+    df_movements["max_compute_gs_diff"] = grouped["max_compute_gs_diff"].first()
+    df_movements["max_cumdist_diff"] = grouped["max_cumdist_diff"].first()
+    df_movements["first_altitude"] = grouped["first_altitude"].first()
+
     # Reset index to get a clean DataFrame
     df_movements = df_movements.reset_index(drop=True)
 
     return df_movements
 
 
-def normalTaxiFuel_df(df_movements: pd.DataFrame, 
-                      startupTime=DEFAULT_STARTUP_TIME, 
-                      warmupTime=DEFAULT_WARMUP_TIME, 
-                      colNames=['MESengine', 'MESapu', 'normTAXIengine']
-                      ) -> pd.DataFrame:
+def normalTaxiFuel_df(
+    df_movements: pd.DataFrame,
+    startupTime=DEFAULT_STARTUP_TIME,
+    warmupTime=DEFAULT_WARMUP_TIME,
+    colNames=["MESengine", "MESapu", "normTAXIengine"],
+) -> pd.DataFrame:
     """
     Calculates and adds columns for normal taxi fuel consumption to the aircraft movements DataFrame.
 
-    This function computes fuel consumption for the main engine startup (MES), auxiliary power unit (APU), 
-    and normal taxiing phases, based on specified startup and warmup times. The resulting DataFrame will 
+    This function computes fuel consumption for the main engine startup (MES), auxiliary power unit (APU),
+    and normal taxiing phases, based on specified startup and warmup times. The resulting DataFrame will
     include new columns for each fuel consumption calculation, labeled according to the `colNames` parameter.
 
     Parameters:
     -----------
     df_movements : pd.DataFrame
         DataFrame containing aircraft movement data with relevant information for fuel calculations.
-    
+
     startupTime : float, optional
         Time in seconds allocated for engine startup (default is `DEFAULT_STARTUP_TIME`).
-    
+
     warmupTime : float, optional
         Time in seconds for engine warmup (default is `DEFAULT_WARMUP_TIME`).
 
     colNames : list of str, optional
         List containing the column names for storing calculated fuel consumption values.
-        Defaults to `['MESengine', 'MESapu', 'normTAXIengine']` for main engine startup, APU, 
+        Defaults to `['MESengine', 'MESapu', 'normTAXIengine']` for main engine startup, APU,
         and taxi engine fuel consumption respectively.
 
     Returns:
@@ -559,7 +805,7 @@ def normalTaxiFuel_df(df_movements: pd.DataFrame,
 
     Notes:
     ------
-    - This function depends on external functions `fuelMESengine_df`, `fuelMESapu_df`, and `fuelTaxiEngine_df` 
+    - This function depends on external functions `fuelMESengine_df`, `fuelMESapu_df`, and `fuelTaxiEngine_df`
       to perform each fuel consumption calculation and update `df_movements`.
     - Assumes `DEFAULT_STARTUP_TIME` and `DEFAULT_WARMUP_TIME` are defined elsewhere in the code.
 
@@ -568,26 +814,30 @@ def normalTaxiFuel_df(df_movements: pd.DataFrame,
     df_movements = normalTaxiFuel_df(df_movements, startupTime=300, warmupTime=120)
     """
 
-    df_movements = fuelMESengine_df(df_movements, startupTime, warmupTime, colName=colNames[0])
-    df_movements = fuelMESapu_df(df_movements, startupTime, warmupTime, colName=colNames[1])
+    df_movements = fuelMESengine_df(
+        df_movements, startupTime, warmupTime, colName=colNames[0]
+    )
+    df_movements = fuelMESapu_df(
+        df_movements, startupTime, warmupTime, colName=colNames[1]
+    )
     df_movements = fuelTaxiEngine_df(df_movements, colName=colNames[2])
 
     return df_movements
 
 
-def extAGPSTaxiFuel_df(df_movements, colNames=['extAGPSapu', 'extAGPStug']):
+def extAGPSTaxiFuel_df(df_movements, colNames=["extAGPSapu", "extAGPStug"]):
     """
-    Calculates and adds columns for fuel consumption associated with external ground power sources (AGPS) 
+    Calculates and adds columns for fuel consumption associated with external ground power sources (AGPS)
     during taxiing in the aircraft movements DataFrame.
 
-    This function computes fuel consumption by the Auxiliary Power Unit (APU) when using external ground 
-    power during taxiing, based on the normal APU fuel flow rate and the taxi duration. Additionally, 
+    This function computes fuel consumption by the Auxiliary Power Unit (APU) when using external ground
+    power during taxiing, based on the normal APU fuel flow rate and the taxi duration. Additionally,
     it creates a placeholder column for tug fuel consumption.
 
     Parameters:
     -----------
     df_movements : pd.DataFrame
-        DataFrame containing aircraft movement data, including columns such as 'APUnormalFF' for APU 
+        DataFrame containing aircraft movement data, including columns such as 'APUnormalFF' for APU
         fuel flow rate and 'taxiDuration' for the duration of the taxi phase.
 
     colNames : list of str, optional
@@ -605,7 +855,7 @@ def extAGPSTaxiFuel_df(df_movements, colNames=['extAGPSapu', 'extAGPStug']):
 
     Calculation:
     ------------
-    - `extAGPSapu`: Calculated as `APUnormalFF` (APU fuel flow rate) per second, multiplied by the 
+    - `extAGPSapu`: Calculated as `APUnormalFF` (APU fuel flow rate) per second, multiplied by the
       total seconds of `taxiDuration`.
     - `extAGPStug`: Set as NaN, providing a placeholder for potential future calculations.
 
@@ -614,11 +864,14 @@ def extAGPSTaxiFuel_df(df_movements, colNames=['extAGPSapu', 'extAGPStug']):
     df_movements = extAGPSTaxiFuel_df(df_movements, colNames=['extAGPSapu', 'extAGPStug'])
     """
 
-    df_movements[colNames[0]] = df_movements['APUnormalFF'] / 3600 * df_movements['taxiDuration'].dt.total_seconds()
+    df_movements[colNames[0]] = (
+        df_movements["APUnormalFF"]
+        / 3600
+        * df_movements["taxiDuration"].dt.total_seconds()
+    )
     df_movements[colNames[1]] = np.nan
 
     return df_movements
-
 
 
 def getIdleFF(typecode: str) -> float:
@@ -626,8 +879,8 @@ def getIdleFF(typecode: str) -> float:
     Retrieves the idle fuel flow (FF) rate based on the aircraft type according to the ICAO Aircraft Emission Database.
     Idle fuel flow refers to the fuel consumption rate at approximately 7% thrust, which is typically used for ground idle conditions.
 
-    The function first attempts to retrieve the default engine type and its idle fuel flow rate from the openap.prop.available_aircraft() 
-    database for the specified aircraft typecode. If the typecode is not available in the database, the function uses predefined engine 
+    The function first attempts to retrieve the default engine type and its idle fuel flow rate from the openap.prop.available_aircraft()
+    database for the specified aircraft typecode. If the typecode is not available in the database, the function uses predefined engine
     mappings from the AIRCRAFT_INFO dictionary.
 
     Args:
@@ -637,12 +890,12 @@ def getIdleFF(typecode: str) -> float:
         float: The idle fuel flow (FF) rate for the specified aircraft type in kilograms per hour (kg/h).
 
     Raises:
-        ValueError: If the aircraft type is not recognized or available in the database or AIRCRAFT_INFO mapping, 
+        ValueError: If the aircraft type is not recognized or available in the database or AIRCRAFT_INFO mapping,
                     or if the engine type is not found in the AIRCRAFT_INFO dictionary.
 
     Notes:
         - The function assumes that the input typecode is a valid ICAO aircraft typecode.
-        - If the typecode is not found in the database, the function uses the AIRCRAFT_INFO dictionary, 
+        - If the typecode is not found in the database, the function uses the AIRCRAFT_INFO dictionary,
           which should contain predefined engine mappings for aircraft types not covered in the ICAO Aircraft Emission Database.
         - If the engine type is not found, a ValueError is raised.
         - This function requires the `prop` module from openap to be properly imported and initialized.
@@ -658,33 +911,33 @@ def getIdleFF(typecode: str) -> float:
     try:
         # Check if the aircraft is available in the database
         aircraft = prop.aircraft(typecode)
-        engine_type = aircraft['engine']['default']
+        engine_type = aircraft["engine"]["default"]
     except:
         # Use predefined engine mapping if the aircraft is not available in the database
         if typecode in AIRCRAFT_INFO:
-            engine_type = AIRCRAFT_INFO.get(typecode, {}).get('engine', 'Unknown')
+            engine_type = AIRCRAFT_INFO.get(typecode, {}).get("engine", "Unknown")
 
     # Retrieve engine properties
     engine = prop.engine(engine_type)
-    
-    # Extract idle fuel flow
-    ff_idle = engine['ff_idl']
 
+    # Extract idle fuel flow
+    ff_idle = engine["ff_idl"]
 
     return ff_idle
+
 
 def getIdleFF_df(df_movements):
     """
     Adds engine idle fuel flow (FF) rates to the aircraft movements DataFrame based on the aircraft's type code.
 
-    This function maps each unique `typecode` in the `df_movements` DataFrame to its corresponding 
-    idle fuel flow rate using the `getIdleFF` function. The mapped idle fuel flow rates are then 
+    This function maps each unique `typecode` in the `df_movements` DataFrame to its corresponding
+    idle fuel flow rate using the `getIdleFF` function. The mapped idle fuel flow rates are then
     added as a new column, `engIdleFF`, in `df_movements`.
 
     Parameters:
     -----------
     df_movements : pd.DataFrame
-        DataFrame containing aircraft movement data with a `typecode` column that specifies the 
+        DataFrame containing aircraft movement data with a `typecode` column that specifies the
         aircraft type code for each flight.
 
     Returns:
@@ -695,9 +948,9 @@ def getIdleFF_df(df_movements):
 
     Notes:
     ------
-    - Assumes that the `getIdleFF` function is defined elsewhere and returns the idle fuel flow rate 
+    - Assumes that the `getIdleFF` function is defined elsewhere and returns the idle fuel flow rate
       for a given `typecode`.
-    - This function uses a dictionary mapping for efficient retrieval of idle fuel flow rates, 
+    - This function uses a dictionary mapping for efficient retrieval of idle fuel flow rates,
       especially useful when `typecode` entries are repeated in `df_movements`.
 
     Example:
@@ -706,34 +959,36 @@ def getIdleFF_df(df_movements):
     """
 
     unique_typecodes = df_movements.typecode.unique()
-    typecode_to_idleFF = {typecode: getIdleFF(typecode) for typecode in unique_typecodes}
-    df_movements['engIdleFF'] = df_movements['typecode'].map(typecode_to_idleFF)
+    typecode_to_idleFF = {
+        typecode: getIdleFF(typecode) for typecode in unique_typecodes
+    }
+    df_movements["engIdleFF"] = df_movements["typecode"].map(typecode_to_idleFF)
 
     return df_movements
 
 
-def getAPUfuelFlow(typecode: str, df_apu = DF_APU, column='') -> pd.Series:
+def getAPUfuelFlow(typecode: str, df_apu=DF_APU, column="") -> pd.Series:
     """
     Retrieves the APU (Auxiliary Power Unit) fuel consumption rates in kilograms per hour for a specified aircraft type.
 
-    The function determines the APU fuel consumption for different operating modes (startup, normal, and high load) 
-    based on the aircraft's maximum passenger capacity and whether it is classified as an old aircraft. The APU 
+    The function determines the APU fuel consumption for different operating modes (startup, normal, and high load)
+    based on the aircraft's maximum passenger capacity and whether it is classified as an old aircraft. The APU
     fuel consumption data is retrieved from a provided DataFrame.
 
     Args:
         typecode (str): The ICAO typecode of the aircraft for which APU fuel consumption data is requested.
-        df_apu (pd.DataFrame): A DataFrame containing APU fuel consumption data for various aircraft types. 
+        df_apu (pd.DataFrame): A DataFrame containing APU fuel consumption data for various aircraft types.
                                Defaults to DF_APU.
 
     Returns:
-        pd.Series: A pandas Series containing the fuel consumption rates for startup, normal, and high load 
+        pd.Series: A pandas Series containing the fuel consumption rates for startup, normal, and high load
                    conditions for the specified aircraft type.
 
     Notes:
-        - The function uses predefined classifications to determine whether an aircraft is considered 'old'. This 
+        - The function uses predefined classifications to determine whether an aircraft is considered 'old'. This
         information is defined in agps_config.OLD_AIRCRAFT.
         - If the aircraft type is not found in the ICAO database, a lookup is performed in the AIRCRAFT_INFO dictionary.
-        - The APU fuel consumption is determined based on the aircraft's maximum passenger capacity and its 
+        - The APU fuel consumption is determined based on the aircraft's maximum passenger capacity and its
           classification as old or new.
 
     Example:
@@ -752,9 +1007,9 @@ def getAPUfuelFlow(typecode: str, df_apu = DF_APU, column='') -> pd.Series:
 
     # Get maximum passenger count or default to a lookup if not found in prop
     try:
-        maxPax = prop.aircraft(typecode)['pax']['max']
+        maxPax = prop.aircraft(typecode)["pax"]["max"]
     except:
-        maxPax = AIRCRAFT_INFO.get(typecode, {}).get('max_pax', 'Unknown')
+        maxPax = AIRCRAFT_INFO.get(typecode, {}).get("max_pax", "Unknown")
         # if maxPax is None:
         #     raise ValueError(f"Aircraft type '{typecode}' not recognized or not available in the database.")
 
@@ -768,13 +1023,12 @@ def getAPUfuelFlow(typecode: str, df_apu = DF_APU, column='') -> pd.Series:
     else:
         idx = 4 if is_old else 5
 
-
-    if column == 'high':
-        apu_FF = df_apu.iloc[idx]['high']
-    elif column == 'normal':
-        apu_FF = df_apu.iloc[idx]['normal']
-    elif column == 'startup':
-        apu_FF = df_apu.iloc[idx]['startup']
+    if column == "high":
+        apu_FF = df_apu.iloc[idx]["high"]
+    elif column == "normal":
+        apu_FF = df_apu.iloc[idx]["normal"]
+    elif column == "startup":
+        apu_FF = df_apu.iloc[idx]["startup"]
     else:
         apu_FF = df_apu.iloc[idx]
 
@@ -793,7 +1047,7 @@ def getAPUfuelFlow_df(df_movements: pd.DataFrame) -> pd.DataFrame:
     Parameters:
     -----------
     df_movements : pd.DataFrame
-        DataFrame containing aircraft movement data with a `typecode` column, specifying the aircraft type 
+        DataFrame containing aircraft movement data with a `typecode` column, specifying the aircraft type
         code for each flight.
 
     Returns:
@@ -805,7 +1059,7 @@ def getAPUfuelFlow_df(df_movements: pd.DataFrame) -> pd.DataFrame:
 
     Notes:
     ------
-    - Assumes that `getAPUfuelFlow` is a function defined elsewhere that takes a `typecode`, a reference DataFrame 
+    - Assumes that `getAPUfuelFlow` is a function defined elsewhere that takes a `typecode`, a reference DataFrame
       (`DF_APU`), and a mode ('high' or 'normal') to return the corresponding APU fuel flow rate.
     - Efficiently retrieves APU fuel flow rates for each unique `typecode` by storing values in dictionaries, which
       are then mapped to `df_movements`.
@@ -816,10 +1070,16 @@ def getAPUfuelFlow_df(df_movements: pd.DataFrame) -> pd.DataFrame:
     """
 
     unique_typecodes = df_movements.typecode.unique()
-    typecode_to_APUhigh = {typecode: getAPUfuelFlow(typecode, DF_APU, 'high') for typecode in unique_typecodes}
-    typecode_to_APUnormal = {typecode: getAPUfuelFlow(typecode, DF_APU, 'normal') for typecode in unique_typecodes}
-    df_movements['APUhighFF'] = df_movements['typecode'].map(typecode_to_APUhigh)
-    df_movements['APUnormalFF'] = df_movements['typecode'].map(typecode_to_APUnormal)
+    typecode_to_APUhigh = {
+        typecode: getAPUfuelFlow(typecode, DF_APU, "high")
+        for typecode in unique_typecodes
+    }
+    typecode_to_APUnormal = {
+        typecode: getAPUfuelFlow(typecode, DF_APU, "normal")
+        for typecode in unique_typecodes
+    }
+    df_movements["APUhighFF"] = df_movements["typecode"].map(typecode_to_APUhigh)
+    df_movements["APUnormalFF"] = df_movements["typecode"].map(typecode_to_APUnormal)
 
     return df_movements
 
@@ -828,8 +1088,8 @@ def getNengine(typecode: str) -> int:
     """
     Retrieves the number of engines for a specified aircraft type.
 
-    This function attempts to find the number of engines for a given aircraft typecode by first checking the 
-    openap.prop.aircraft(). If the aircraft type is not available in the database, the function falls back to using 
+    This function attempts to find the number of engines for a given aircraft typecode by first checking the
+    openap.prop.aircraft(). If the aircraft type is not available in the database, the function falls back to using
     predefined data in the `AIRCRAFT_INFO` dictionary specified in agps_config.py.
 
     Args:
@@ -843,7 +1103,7 @@ def getNengine(typecode: str) -> int:
 
     Notes:
         - The function converts the input `typecode` to uppercase to ensure consistency in lookups.
-        - If the typecode is not found in openap.prop.aircraft(), the function uses the `AIRCRAFT_INFO` dictionary to determine 
+        - If the typecode is not found in openap.prop.aircraft(), the function uses the `AIRCRAFT_INFO` dictionary to determine
           the number of engines.
         - If the number of engines is not found in either the database or `AIRCRAFT_INFO`, a ValueError is raised.
 
@@ -858,10 +1118,10 @@ def getNengine(typecode: str) -> int:
 
     # Try to get the number of engines from the prop module
     try:
-        nEngines = prop.aircraft(typecode)['engine']['number']
+        nEngines = prop.aircraft(typecode)["engine"]["number"]
     except:
         # If not in prop.aircraft, try AIRCRAFT_INFO
-        nEngines = AIRCRAFT_INFO.get(typecode, {}).get('n_engines', 'Unknown')
+        nEngines = AIRCRAFT_INFO.get(typecode, {}).get("n_engines", "Unknown")
 
     return nEngines
 
@@ -871,13 +1131,13 @@ def getNengine_df(df_movements: pd.DataFrame) -> pd.DataFrame:
     Adds the number of engines for each aircraft type to the aircraft movements DataFrame based on the type code.
 
     This function retrieves the number of engines (`nEngines`) for each unique `typecode` in `df_movements`
-    using the `getNengine` function. The resulting values are added as a new column, `nEngines`, to 
+    using the `getNengine` function. The resulting values are added as a new column, `nEngines`, to
     `df_movements`.
 
     Parameters:
     -----------
     df_movements : pd.DataFrame
-        DataFrame containing aircraft movement data, including a `typecode` column that specifies the 
+        DataFrame containing aircraft movement data, including a `typecode` column that specifies the
         aircraft type code for each flight.
 
     Returns:
@@ -889,7 +1149,7 @@ def getNengine_df(df_movements: pd.DataFrame) -> pd.DataFrame:
     Notes:
     ------
     - Assumes that the `getNengine` function is defined elsewhere and returns the number of engines for a given `typecode`.
-    - Uses a dictionary mapping to store engine counts for each unique `typecode`, which is then efficiently 
+    - Uses a dictionary mapping to store engine counts for each unique `typecode`, which is then efficiently
       mapped to `df_movements`.
 
     Example:
@@ -898,19 +1158,21 @@ def getNengine_df(df_movements: pd.DataFrame) -> pd.DataFrame:
     """
 
     unique_typecodes = df_movements.typecode.unique()
-    typecode_to_nEngine = {typecode: getNengine(typecode) for typecode in unique_typecodes}
-    df_movements['nEngines'] = df_movements['typecode'].map(typecode_to_nEngine)
+    typecode_to_nEngine = {
+        typecode: getNengine(typecode) for typecode in unique_typecodes
+    }
+    df_movements["nEngines"] = df_movements["typecode"].map(typecode_to_nEngine)
 
     return df_movements
 
 
-def getMESduration(typecode: str, 
-                   startupTime=DEFAULT_STARTUP_TIME, 
-                   warmupTime=DEFAULT_WARMUP_TIME) -> datetime.timedelta:
+def getMESduration(
+    typecode: str, startupTime=DEFAULT_STARTUP_TIME, warmupTime=DEFAULT_WARMUP_TIME
+) -> datetime.timedelta:
     """
     Calculates the total duration of the main engine start (MES) and warm-up period for a specified aircraft type.
 
-    This function computes the duration required to start all engines and perform the necessary warm-up for a 
+    This function computes the duration required to start all engines and perform the necessary warm-up for a
     given aircraft type based on the number of engines and predefined times for startup per engine and warm-up.
 
     Args:
@@ -932,23 +1194,24 @@ def getMESduration(typecode: str,
         >>> print(mes_duration)
         0:04:30  # Example output, representing 4 minutes and 30 seconds
     """
-    
+
     nEngines = getNengine(typecode.upper())
 
-    return datetime.timedelta(seconds = (nEngines * startupTime) + warmupTime)
+    return datetime.timedelta(seconds=(nEngines * startupTime) + warmupTime)
 
 
-def fuelMESengine_df(df_movements: pd.DataFrame, 
-                     startupTime=DEFAULT_STARTUP_TIME, 
-                     warmupTime=DEFAULT_WARMUP_TIME,
-                     colName='MESengine') -> pd.DataFrame:
-    
+def fuelMESengine_df(
+    df_movements: pd.DataFrame,
+    startupTime=DEFAULT_STARTUP_TIME,
+    warmupTime=DEFAULT_WARMUP_TIME,
+    colName="MESengine",
+) -> pd.DataFrame:
     """
-    Calculates fuel consumption during main engine startup (MES) for each flight based on idle fuel flow 
+    Calculates fuel consumption during main engine startup (MES) for each flight based on idle fuel flow
     and the number of engines, and adds it to the aircraft movements DataFrame.
 
-    This function computes the fuel consumption for each engine during the startup and warmup phases 
-    based on the number of engines (`nEngines`) and the idle fuel flow rate (`engIdleFF`). It sums the 
+    This function computes the fuel consumption for each engine during the startup and warmup phases
+    based on the number of engines (`nEngines`) and the idle fuel flow rate (`engIdleFF`). It sums the
     fuel consumption for all engines and stores the result in a new column specified by `colName`.
 
     Parameters:
@@ -986,11 +1249,11 @@ def fuelMESengine_df(df_movements: pd.DataFrame,
     """
 
     # Create an array representing the engine numbers from 1 up to the maximum nEngine value
-    engine_numbers = np.arange(1, df_movements['nEngines'].max() + 1)
+    engine_numbers = np.arange(1, df_movements["nEngines"].max() + 1)
 
     # Reshape 'engIdleFF' and 'nEngines' to match the broadcasting requirements
-    idle_ff_values = df_movements['engIdleFF'].values[:, np.newaxis]
-    n_engine_values = df_movements['nEngines'].values[:, np.newaxis]
+    idle_ff_values = df_movements["engIdleFF"].values[:, np.newaxis]
+    n_engine_values = df_movements["nEngines"].values[:, np.newaxis]
 
     # Calculate the fuel consumption for each engine and sum across all engines up to 'nEngines' for each row
     fuel_per_engine = idle_ff_values * (engine_numbers * startupTime + warmupTime)
@@ -1004,16 +1267,18 @@ def fuelMESengine_df(df_movements: pd.DataFrame,
     return df_movements
 
 
-def fuelMESapu_df(df_movements: pd.DataFrame,
-                  startupTime=DEFAULT_STARTUP_TIME,
-                  warmupTime=DEFAULT_WARMUP_TIME,
-                  colName='MESapu') -> pd.DataFrame:
+def fuelMESapu_df(
+    df_movements: pd.DataFrame,
+    startupTime=DEFAULT_STARTUP_TIME,
+    warmupTime=DEFAULT_WARMUP_TIME,
+    colName="MESapu",
+) -> pd.DataFrame:
     """
-    Calculates fuel consumption by the Auxiliary Power Unit (APU) during the main engine startup (MES) phase 
+    Calculates fuel consumption by the Auxiliary Power Unit (APU) during the main engine startup (MES) phase
     for each flight and adds it to the aircraft movements DataFrame.
 
-    This function computes the APU fuel consumption during both the startup and warmup phases using the high 
-    and normal APU fuel flow rates (`APUhighFF` and `APUnormalFF`). The result is added as a new column 
+    This function computes the APU fuel consumption during both the startup and warmup phases using the high
+    and normal APU fuel flow rates (`APUhighFF` and `APUnormalFF`). The result is added as a new column
     specified by `colName`.
 
     Parameters:
@@ -1025,15 +1290,15 @@ def fuelMESapu_df(df_movements: pd.DataFrame,
         - `APUnormalFF`: Normal fuel flow rate for the APU during the warmup phase.
 
     startupTime : float, optional
-        Time in seconds allocated for the APU's high fuel flow phase during engine startup 
+        Time in seconds allocated for the APU's high fuel flow phase during engine startup
         (default is `DEFAULT_STARTUP_TIME`).
 
     warmupTime : float, optional
-        Time in seconds allocated for the APU's normal fuel flow phase during engine warmup 
+        Time in seconds allocated for the APU's normal fuel flow phase during engine warmup
         (default is `DEFAULT_WARMUP_TIME`).
 
     colName : str, optional
-        Name of the column to store the calculated APU fuel consumption during the MES phase 
+        Name of the column to store the calculated APU fuel consumption during the MES phase
         (default is 'MESapu').
 
     Returns:
@@ -1044,9 +1309,9 @@ def fuelMESapu_df(df_movements: pd.DataFrame,
 
     Calculation:
     ------------
-    - Computes high APU fuel consumption as `(nEngines * APUhighFF / 3600) * startupTime`, representing 
+    - Computes high APU fuel consumption as `(nEngines * APUhighFF / 3600) * startupTime`, representing
       fuel used during the high-power startup phase.
-    - Computes normal APU fuel consumption as `(APUnormalFF / 3600) * warmupTime`, representing fuel used 
+    - Computes normal APU fuel consumption as `(APUnormalFF / 3600) * warmupTime`, representing fuel used
       during the warmup phase.
     - Sums the two components to obtain total APU fuel consumption during the MES phase.
 
@@ -1055,20 +1320,22 @@ def fuelMESapu_df(df_movements: pd.DataFrame,
     df_movements = fuelMESapu_df(df_movements, startupTime=300, warmupTime=120, colName='MESapuFuel')
     """
 
-    df_movements[colName] = (df_movements['nEngines'] * df_movements['APUhighFF'] / 3600 * startupTime) + (df_movements['APUnormalFF'] / 3600 * warmupTime)
+    df_movements[colName] = (
+        df_movements["nEngines"] * df_movements["APUhighFF"] / 3600 * startupTime
+    ) + (df_movements["APUnormalFF"] / 3600 * warmupTime)
 
     return df_movements
 
 
-def fuelTaxiEngine_df(df_movements: pd.DataFrame, 
-                      singleEngineTaxi=False,
-                      colName='normTAXIengine') -> pd.DataFrame:
+def fuelTaxiEngine_df(
+    df_movements: pd.DataFrame, singleEngineTaxi=False, colName="normTAXIengine"
+) -> pd.DataFrame:
     """
     Calculates fuel consumption during the taxiing phase for each flight and adds it to the aircraft movements DataFrame.
 
-    This function computes the fuel used by the engines during taxiing based on the taxi duration, 
-    number of engines (`nEngines`), and idle fuel flow rate (`engIdleFF`). If `singleEngineTaxi` is set 
-    to True, the function assumes that only one engine is used during taxiing, reducing the total fuel 
+    This function computes the fuel used by the engines during taxiing based on the taxi duration,
+    number of engines (`nEngines`), and idle fuel flow rate (`engIdleFF`). If `singleEngineTaxi` is set
+    to True, the function assumes that only one engine is used during taxiing, reducing the total fuel
     consumption by half.
 
     Parameters:
@@ -1080,7 +1347,7 @@ def fuelTaxiEngine_df(df_movements: pd.DataFrame,
         - `engIdleFF`: Idle fuel flow rate per engine.
 
     singleEngineTaxi : bool, optional
-        If True, calculates taxi fuel consumption based on single-engine taxiing by reducing 
+        If True, calculates taxi fuel consumption based on single-engine taxiing by reducing
         the fuel consumption by half (default is False).
 
     colName : str, optional
@@ -1105,13 +1372,138 @@ def fuelTaxiEngine_df(df_movements: pd.DataFrame,
     df_movements = fuelTaxiEngine_df(df_movements, singleEngineTaxi=True, colName='taxiFuelConsumption')
     """
 
-    fuelConsumption = (df_movements['taxiDuration'].dt.total_seconds() 
-                       * df_movements['nEngines'] 
-                       * df_movements['engIdleFF'])
+    fuelConsumption = (
+        df_movements["taxiDuration"].dt.total_seconds()
+        * df_movements["nEngines"]
+        * df_movements["engIdleFF"]
+    )
 
     if singleEngineTaxi:
         fuelConsumption = fuelConsumption * 0.5
 
     df_movements[colName] = fuelConsumption
 
-    return df_movements 
+    return df_movements
+
+
+def convert_timestamp(x):
+    """
+    Converts various input formats to a standardized pandas Timestamp.
+
+    This function ensures consistent timestamp formatting across different data sources by converting
+    supported input types (Unix timestamps, pandas Timestamps) to pandas `Timestamp` objects. Invalid
+    or unsupported inputs are converted to `pd.NaT`.
+
+    Parameters:
+    -----------
+    x : Any
+        The input value to be converted to a pandas `Timestamp`. Supported formats include:
+        - Unix timestamps (float or int) that represent seconds since the epoch (e.g., 1.6e9).
+        - pandas `Timestamp` objects, which are returned unchanged.
+
+    Returns:
+    --------
+    pd.Timestamp or pd.NaT
+        A pandas `Timestamp` if the conversion is successful, otherwise `pd.NaT`.
+
+    Conversion Logic:
+    -----------------
+    - Unix timestamps (float or int) greater than 1e9 are converted using `pd.to_datetime()`.
+    - `pd.Timestamp` inputs are returned unchanged for compatibility with existing pandas structures.
+    - All other inputs or invalid conversions result in `pd.NaT`.
+
+    Examples:
+    ---------
+    >>> convert_timestamp(1.6e9)
+    Timestamp('2020-09-13 12:26:40')
+
+    >>> convert_timestamp(pd.Timestamp('2025-03-28 10:00:00'))
+    Timestamp('2025-03-28 10:00:00')
+
+    >>> convert_timestamp("invalid_input")
+    NaT
+    """
+    if (
+        isinstance(x, (float, int)) and x > 1e9
+    ):  # Convert to unix timestamps if float or int.
+        return pd.to_datetime(x, unit="s", errors="coerce")
+    elif isinstance(
+        x, pd.Timestamp
+    ):  # If x is alreardy a pandas timestamp, x will be returned
+        return x
+    else:
+        return pd.NaT  # Invalid Value will be converted to Not a Timestamp
+
+
+def ensure_traffic_datatypes(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Ensures consistent and appropriate data types for columns in a trajectory DataFrame.
+
+    This function standardizes the data types of a DataFrame derived from a `traffic` object.
+    It ensures compatibility with downstream processing by converting columns to expected data types
+    (e.g., numeric, boolean, timestamp, and object/string).
+
+    Parameters:
+    -----------
+    df : pd.DataFrame
+        DataFrame containing trajectory data obtained from a `traffic` object.
+        The DataFrame is expected to have specific columns, including timestamps, numeric attributes,
+        and categorical strings.
+
+    Returns:
+    --------
+    pd.DataFrame
+        The DataFrame with columns converted to their expected data types.
+
+    Expected Columns and Their Data Types:
+    --------------------------------------
+    - 'timestamp' (Timestamp): Converted using `convert_timestamp()` for consistency.
+    - 'hour' (Timestamp): Converted using `convert_timestamp()` for consistency.
+    - 'onground' (bool): Converted to boolean type.
+    - 'alert' (bool): Converted to boolean type.
+    - 'spi' (bool): Converted to boolean type.
+    - 'last_position' (float): Converted to 64-bit floating-point format.
+    - 'latitude' (float): Converted to double-precision floating-point format.
+    - 'longitude' (float): Converted to double-precision floating-point format.
+    - 'groundspeed' (float): Converted to double-precision floating-point format.
+    - 'track' (float): Converted to double-precision floating-point format.
+    - 'vertical_rate' (float): Converted to double-precision floating-point format.
+    - 'altitude' (float): Converted to double-precision floating-point format.
+    - 'geoaltitude' (float): Converted to double-precision floating-point format.
+    - 'lastcontact' (float): Converted to double-precision floating-point format.
+    - 'icao24' (str): Converted to string/object type.
+    - 'callsign' (str): Converted to string/object type.
+    - 'squawk' (str): Converted to string/object type.
+
+    Notes:
+    ------
+    - It is assumed that `convert_timestamp()` is a custom function that converts various timestamp formats to a standard pandas `Timestamp`.
+    - This function helps ensure compatibility and consistency when working with trajectory data processed by the `traffic` library.
+
+    Example:
+    --------
+    >>> df_cleaned = ensure_traffic_datatypes(df)
+    """
+
+    # # Make sure data types of downloaded data are correct
+    df["timestamp"] = df["timestamp"].apply(convert_timestamp)
+    df["hour"] = df["hour"].apply(convert_timestamp)
+    df["onground"] = df["onground"].astype(np.bool_)
+    df["alert"] = df["alert"].astype(np.bool_)
+    df["spi"] = df["spi"].astype(np.bool_)
+    df["last_position"] = df["last_position"].astype(np.float64)
+
+    df["latitude"] = df["latitude"].astype("double")
+    df["longitude"] = df["longitude"].astype("double")
+    df["groundspeed"] = df["groundspeed"].astype("double")
+    df["track"] = df["track"].astype("double")
+    df["vertical_rate"] = df["vertical_rate"].astype("double")
+    df["altitude"] = df["altitude"].astype("double")
+    df["geoaltitude"] = df["geoaltitude"].astype("double")
+    df["lastcontact"] = df["lastcontact"].astype("double")
+
+    df["icao24"] = df["icao24"].astype("object")
+    df["callsign"] = df["callsign"].astype("object")
+    df["squawk"] = df["squawk"].astype("object")
+
+    return df
