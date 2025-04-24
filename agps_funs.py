@@ -6,6 +6,7 @@ from agps_config import (
     OLD_AIRCRAFT,
     AC2CONSIDER,
     DF_MISSING_ICAO24,
+    get_Stands_LSZH,
 )
 import traffic
 from traffic.core import Traffic, Flight
@@ -22,6 +23,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 from cartes.crs import EuroPP
 import cartopy.crs as ccrs
+from shapely.geometry import Point
 
 data_proj = ccrs.PlateCarree()
 
@@ -548,6 +550,32 @@ def gs_cumdist_diff(flight: Flight) -> Flight:
     return flight
 
 
+def get_stand_area(flight: Flight, standAreas) -> Flight:
+    # Default value for area
+    area = "unknown"
+
+    if flight.isTakeoff_max:
+        # Get the first position of the flight
+        first_position = flight.first(5)
+
+        if first_position is not None:
+            lon = first_position.data.longitude.mean()
+            lat = first_position.data.latitude.mean()
+
+            if lat is not None and lon is not None:
+                first_point = Point(lon, lat)
+
+            for stand_name, polygon in standAreas.items():
+                if polygon.contains(first_point):
+                    area = stand_name
+                    break
+
+    flight.data = flight.data.copy()
+    flight.data.loc[:, "stand_area"] = area
+
+    return flight
+
+
 def add_known_missing_icao24(df_movements: pd.DataFrame) -> pd.DataFrame:
     """
     Enhances the aircraft movement DataFrame by merging with a dataset of missing ICAO24 codes to fill in
@@ -753,6 +781,7 @@ def get_df_movements(df) -> pd.DataFrame:
     df_movements["taxiDistance"] = grouped["taxiDistance"].first()
     df_movements["takeoffRunway"] = grouped["takeoffRunway"].first()
     df_movements["parking_position"] = grouped["parking_position"].first()
+    df_movements["stand_area"] = grouped["stand_area"].first()
     df_movements["typecode"] = grouped["typecode"].first()
     df_movements["icaoaircrafttype"] = grouped["icaoaircrafttype"].first()
     df_movements["min_compute_gs_diff"] = grouped["min_compute_gs_diff"].first()

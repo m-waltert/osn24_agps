@@ -47,7 +47,9 @@ distance_matrix_LSZH = pd.DataFrame(
 )
 
 
-def calculate_driving_distance(runway: str, stand_area: str, distance_matrix) -> float:
+def calculate_driving_distance(
+    runway: str, stand_area: str, distance_matrix: pd.DataFrame, dist_default=2.8
+) -> float:
     """
     Retrieve distance between runway and stand area from the distance matrix.
     If the combination does not exist, return a default value.
@@ -55,7 +57,61 @@ def calculate_driving_distance(runway: str, stand_area: str, distance_matrix) ->
     try:
         return distance_matrix.loc[runway, stand_area]
     except KeyError:
-        return 2.8  # Default distance if not found
+        return dist_default  # Default distance if not found
+
+
+def filter_flights(
+    subset_df: pd.DataFrame,
+    allowed_airlines: list = [],
+    allowed_aircraft_types: list = [],
+    allowed_stand_rwy_combinations: list = [],
+    allowed_time_windows: list = [],
+) -> pd.Series:
+    """
+    Filters flights based on the given criteria.
+
+    Args:
+        subset_df (pd.DataFrame): The DataFrame containing flight data.
+        allowed_airlines (list): List of allowed airlines.
+        allowed_aircraft_types (list): List of allowed aircraft types.
+        allowed_stand_rwy_combinations (list): List of allowed stand-runway combinations.
+        allowed_time_windows (list): List of allowed time windows as (weekday, start_time, end_time).
+
+    Returns:
+        pd.Series: A boolean mask indicating valid flights.
+    """
+    valid_flights_mask = pd.Series([True] * len(subset_df))
+
+    # Filter by allowed airlines
+    if allowed_airlines:
+        valid_flights_mask &= subset_df["airline"].isin(allowed_airlines)
+
+    # Filter by allowed aircraft types
+    if allowed_aircraft_types:
+        valid_flights_mask &= subset_df["typecode"].isin(allowed_aircraft_types)
+
+    # Filter by allowed stand-runway combinations
+    if allowed_stand_rwy_combinations:
+        valid_flights_mask &= subset_df.apply(
+            lambda row: (row["stand_area"], row["takeoffRunway"])
+            in allowed_stand_rwy_combinations,
+            axis=1,
+        )
+
+    # Filter by allowed time windows
+    if allowed_time_windows:
+        valid_flights_mask &= subset_df.apply(
+            lambda row: any(
+                row["startMovement"].weekday() == day
+                and pd.to_datetime(start_time).time()
+                <= row["startMovement"].time()
+                <= pd.to_datetime(end_time).time()
+                for day, start_time, end_time in allowed_time_windows
+            ),
+            axis=1,
+        )
+
+    return valid_flights_mask
 
 
 def optimize_day_MILP_gurobi(
@@ -64,8 +120,10 @@ def optimize_day_MILP_gurobi(
     n_tugs: int,
     distance_matrix: pd.DataFrame,
     buffer_time: pd.Timedelta,
+    allowed_airlines: list = [],
     allowed_aircraft_types: list = [],
-    allowed_combinations: list = [],
+    allowed_stand_rwy_combinations: list = [],
+    allowed_time_windows: list = [],
 ) -> pd.DataFrame:
     subset_df = subset_df.copy().reset_index(drop=True)
     num_flights = len(subset_df)
@@ -73,25 +131,27 @@ def optimize_day_MILP_gurobi(
         return subset_df
 
     # Filter flights
-    valid_flights_mask = pd.Series([True] * len(subset_df))
-    if allowed_aircraft_types:
-        valid_flights_mask &= subset_df["typecode"].isin(allowed_aircraft_types)
-    if allowed_combinations:
-        valid_flights_mask &= subset_df.apply(
-            lambda row: (row["stand_area"], row["takeoffRunway"])
-            in allowed_combinations,
-            axis=1,
-        )
+    valid_flights_mask = filter_flights(
+        subset_df,
+        allowed_airlines,
+        allowed_aircraft_types,
+        allowed_stand_rwy_combinations,
+        allowed_time_windows,
+    )
 
+    # Apply the mask to filter the DataFrame
     filtered_df = subset_df[valid_flights_mask].copy()
     filtered_out_df = subset_df[~valid_flights_mask].copy()
 
+    # Assign default values for filtered-out flights
     filtered_out_df["Adjusted_Fuel_Consumption"] = filtered_out_df["F_i_norm"]
     filtered_out_df["Assigned_Tug"] = None
 
+    # If no flights remain after filtering, return the filtered-out DataFrame
     if len(filtered_df) == 0:
         return filtered_out_df
 
+    # Sort and prepare the filtered DataFrame
     filtered_df = filtered_df.sort_values("startMovement").reset_index(drop=True)
     flights = list(filtered_df.index)
     tugs = list(range(n_tugs))
@@ -99,6 +159,7 @@ def optimize_day_MILP_gurobi(
     speed_tug = DEFAULT_SPEED_AGPS  # in km/h
     sfc_tug = DEFAULT_SFC_AGPS  # in kg/h
 
+    # Initialize the optimization model
     model = Model("AGPS_Tug_Assignment")
     model.setParam("OutputFlag", 0)
 
@@ -159,7 +220,7 @@ def optimize_day_MILP_gurobi(
                 model.addConstr(z[i, j] >= tug_fuel * x[i, j], name=f"fuel_{i}_{j}")
             previous_position = filtered_df.loc[i, "takeoffRunway"]
 
-    # Solve
+    # Solve the optimization model
     model.optimize()
 
     # Collect results
@@ -178,10 +239,14 @@ def optimize_day_MILP_gurobi(
         for row, tug in zip(filtered_df.itertuples(index=False), assigned_tugs)
     ]
 
+    # Combine filtered and filtered-out DataFrames
     valid_dfs = []
+
     for df in [filtered_df, filtered_out_df]:
-        if not df.empty and not df.isna().all(axis=None):
-            valid_dfs.append(df)
+        if isinstance(df, pd.DataFrame) and not df.empty:
+            df_clean = df.dropna(axis=1, how="all")
+            if not df_clean.empty:
+                valid_dfs.append(df_clean)
 
     if valid_dfs:
         result_df = pd.concat(valid_dfs, ignore_index=True, sort=False)
