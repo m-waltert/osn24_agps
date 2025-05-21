@@ -103,6 +103,37 @@ DEFAULT_WARMUP_TIME = (
 # Default Pushback Tug parameters
 DEFAULT_SFC_AGPS = 20 / 3600  # kg/h -> kg/s (from Postorino_etal_2019)
 DEFAULT_SPEED_AGPS = 15  # Driving speed of tug [km/h]
+DEFAULT_BUFFER_AGPS = pd.Timedelta(
+    minutes=15
+)  # Buffer time between two consecutive pushbacks (of one single AGPS unit)
+
+# Driving distances from Runway to Stand Areas in kilometers [km]
+# All runways to unknwon: 2.8km (which is equal to the average of the distances to the other stand areas)
+DISTANCE_MATRIX = pd.DataFrame(
+    data=[  # A_N    AB_C    B_S     C,      D,      E,      F,      G,      H,      I,      T,      GAC     unknown
+        [4.4, 3.8, 3.7, 3.5, 3.3, 5.3, 4.6, 2.8, 4.4, 4.7, 3.3, 5.0, 2.8],  # RWY 10
+        [3.6, 3.6, 3.8, 4.4, 4.2, 2.1, 3.7, 5.1, 3.6, 3.9, 4.6, 4.1, 2.8],  # RWY 16
+        [1.3, 1.5, 1.5, 2.0, 1.8, 2.0, 0.6, 2.7, 1.2, 1.5, 2.2, 0.4, 2.8],  # RWY 28
+        [2.4, 2.5, 2.7, 3.3, 3.0, 1.1, 1.8, 3.8, 2.4, 2.7, 3.3, 1.6, 2.8],  # RWY 32
+        [2.2, 1.7, 1.4, 1.3, 1.0, 3.0, 2.4, 0.5, 2.2, 2.4, 1.0, 2.7, 2.8],  # RWY 34
+    ],
+    index=["10", "16", "28", "32", "34"],  # Takeoff runways as rows
+    columns=[
+        "A North",
+        "AB Courtyard",
+        "B South",
+        "C",
+        "D",
+        "E",
+        "F",
+        "G",
+        "H",
+        "I",
+        "T",
+        "GAC",
+        "unknown",
+    ],  # Stand Areas as columns
+)
 
 # %%
 # APU Fuel Flow Data, based on ICAO Doc 9889 Airport Air Quality Manual, Table 3-A1-6. APU fuel group
