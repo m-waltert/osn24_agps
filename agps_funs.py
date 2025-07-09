@@ -19,7 +19,6 @@ import pandas as pd
 import datetime
 import os
 from openap import prop
-import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 from cartes.crs import EuroPP
 import cartopy.crs as ccrs
