@@ -61,7 +61,7 @@ def get_df_movements(filepath: str) -> pd.DataFrame:
     # Add date column
     df_movements["date"] = df_movements["lineupTime"].dt.date
 
-    #### Standa areas
+    #### Stand areas
     # Overwrite stand_area == "unkown" with the first character of the parking_position (if available)
     df_movements["stand_area"] = df_movements["stand_area"].replace("unkown", "unknown")
 
@@ -74,6 +74,12 @@ def get_df_movements(filepath: str) -> pd.DataFrame:
     df_movements.loc[mask, "stand_area"] = df_movements.loc[
         mask, "parking_position"
     ].str[0]
+
+    #### Calculate "start Movement" time
+    # Calculate startMovement as the earlier of the two times
+    df_movements["startMovement"] = df_movements[["startTaxi", "startPushback"]].min(
+        axis=1, skipna=True
+    )
 
     #### Add Airline column based on callsign
     def contains_letters_and_numbers(s):
@@ -126,10 +132,10 @@ def get_df_movements(filepath: str) -> pd.DataFrame:
 
 def calculate_normal_taxi_fuel(
     df_movements: pd.DataFrame,
-    startupTime=DEFAULT_STARTUP_TIME,  # Startup time of one single engine in seconds
-    warmupTime=DEFAULT_WARMUP_TIME,  # Warmup time (for the entire flight) in seconds
-    sfc_agps=DEFAULT_SFC_AGPS,  # Specific fuel consumption AGPS [kg/h]
-    outputColName="F_i_norm",  # Output column name for normal fuel consumption
+    startupTime=DEFAULT_STARTUP_TIME,       # Startup time of one single engine in seconds
+    warmupTime=DEFAULT_WARMUP_TIME,         # Warmup time (for the entire flight) in seconds
+    sfc_agps=DEFAULT_SFC_AGPS,              # Specific fuel consumption AGPS [kg/s]
+    outputColName="F_i_norm",               # Output column name for normal fuel consumption
 ) -> pd.DataFrame:
     # Number of engines
     nEngines = df_movements["nEngines"].fillna(2).astype(int)
@@ -182,18 +188,13 @@ def calculate_normal_taxi_fuel(
 
 def calculate_agps_taxi_fuel(
     df_movements: pd.DataFrame,
-    startupTime=DEFAULT_STARTUP_TIME,  # Startup time of one single engine in seconds
-    warmupTime=DEFAULT_WARMUP_TIME,  # Warmup time (for the entire flight) in seconds
-    sfc_agps=DEFAULT_SFC_AGPS,  # Specific fuel consumption AGPS [kg/h]
-    outputColName="F_i_agps",  # Output column name for AGPS-assisted fuel consumption
+    startupTime=DEFAULT_STARTUP_TIME,       # Startup time of one single engine in seconds
+    warmupTime=DEFAULT_WARMUP_TIME,         # Warmup time (for the entire flight) in seconds
+    sfc_agps=DEFAULT_SFC_AGPS,              # Specific fuel consumption AGPS [kg/s]
+    outputColName="F_i_agps",               # Output column name for AGPS-assisted fuel consumption
 ) -> pd.DataFrame:
     # Number of engines
     nEngines = df_movements["nEngines"].fillna(2).astype(int)
-
-    # Calculate startMovement as the earlier of the two times
-    df_movements["startMovement"] = df_movements[["startTaxi", "startPushback"]].min(
-        axis=1, skipna=True
-    )
 
     # Duration of AGPS-assisted taxi
     df_movements["duration_AGPS"] = (
@@ -341,9 +342,6 @@ def optimize_day_MILP_gurobi(
     filtered_df = filtered_df.sort_values("startMovement").reset_index(drop=True)
     flights = list(filtered_df.index)
     tugs = list(range(n_tugs))
-
-    # agps_speed = DEFAULT_SPEED_AGPS  # in km/h
-    # agps_sfc = DEFAULT_SFC_AGPS  # in kg/h
 
     # Initialize the optimization model
     model = Model("AGPS_Tug_Assignment")

@@ -101,7 +101,9 @@ DEFAULT_WARMUP_TIME = (
 )
 
 # Default Pushback Tug parameters
-DEFAULT_SFC_AGPS = 20 / 3600  # kg/h -> kg/s (from Postorino_etal_2019)
+DEFAULT_SFC_AGPS = (
+    20 / 3600
+)  # kg/h -> kg/s (from Postorino_etal_2019), other source: Deonandan_Balakrishnan_2010
 DEFAULT_SPEED_AGPS = 15  # Driving speed of tug [km/h]
 DEFAULT_BUFFER_AGPS = pd.Timedelta(
     minutes=15
